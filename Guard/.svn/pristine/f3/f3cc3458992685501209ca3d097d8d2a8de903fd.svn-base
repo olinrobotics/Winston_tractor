@@ -1,0 +1,106 @@
+% An application that remotely controls multiple vehicles, driving them toward desired states.
+classdef ARDController < Msg.App & Msg.Cmd & Msg.Time & Msg.Log
+  properties (GetAccess = public, Constant = true)
+    fiducialScaleM = getfield(JSONRead('guard.json'), 'fiducialScaleM'); % fiducial scale
+    hfovR = str2double(FlightGear.Config.hfov)*math.DEGTORAD; % horizontal field of view
+    dIdeal = 4+ARDController.fiducialScaleM/2.0*csc(ARDController.hfovR/2.0); % ideal following distance
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    ownID
+    targetID
+    xOwn
+    vOwn
+    xTarget
+    vTarget
+  end
+  
+  methods (Access = public)
+    function this = ARDController()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick, cfg.slowTick);
+      this = this@Msg.Cmd(cfg.ackPeriod, cfg.timeWarp);
+      this = this@Msg.Time(cfg.timeSourceID, cfg.timeWarp);
+      this = this@Msg.Log();
+      this.ownID = cfg.ownID;
+      this.targetID = cfg.targetID;
+      this.xOwn = [];
+      this.vOwn = [];
+      this.xTarget = [];
+      this.vTarget = [];
+    end
+    
+    function sub = topics(this)
+      sub{1, 1} = Msg.Proto.topic('nav.FusedState', this.ownID);
+      sub{2, 1} = Msg.Proto.topic('nav.FusedState', this.targetID);
+      sub{3, 1} = Msg.Proto.topic('nav.DockingState', '');
+    end
+    
+    function done = init(this)
+      done = this.isTimeSet();
+    end
+    
+    function idle(this, inbox) %#ok unused input
+      % TODO: send stabilizing control signals
+      pbCtrl = nav.CtrlBuilder();
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      this.send(Msg.Proto.pack('nav.Ctrl', this.ownID, pbCtrl));
+      this.send(Msg.Proto.pack('nav.Ctrl', this.targetID, pbCtrl));
+    end
+    
+    function done = run(this, inbox)
+      % TODO: receive and process the full fused states of both vehicles and docking states
+      if(Msg.Proto.isTopic(inbox, Msg.Proto.topic('nav.FusedState', '')))
+        [~, id, pb] = Msg.Proto.unpack(inbox);
+        switch(id)
+          case this.ownID
+            rLat = earth.WGS84.radiusOfCurvature(pb.getLatR())+pb.getAltM();
+            this.xOwn = rLat*pb.getLatR();
+            this.vOwn = pb.getForwardDeltaM()/pb.getTimeDeltaS();
+          case this.targetID
+            rLat = earth.WGS84.radiusOfCurvature(pb.getLatR())+pb.getAltM();
+            this.xTarget = rLat*pb.getLatR();
+            this.vTarget = pb.getForwardDeltaM()/pb.getTimeDeltaS();
+          otherwise
+            % nop
+        end
+      end
+      
+      % TODO: compute and send intelligent control signals that depend on the docking state
+      dt = 1.0/str2double(FlightGear.Config.hz);
+      if(~(isempty(this.xOwn)||isempty(this.xTarget)))
+        dx = this.xTarget-this.xOwn-ARDController.dIdeal;
+        vDesired = 0.1*dx;
+        f = 0.1*(vDesired-this.vOwn)/dt;
+        this.log('dx=%f;vDesired=%f;f=%f', dx, vDesired, f);
+      else
+        f = 0.0;
+      end
+      pbCtrl = nav.CtrlBuilder();
+      pbCtrl.addUReal(f);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      this.send(Msg.Proto.pack('nav.Ctrl', 'N100US', pbCtrl));
+      pbCtrl = nav.CtrlBuilder();
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      this.send(Msg.Proto.pack('nav.Ctrl', 'N00001', pbCtrl));
+      done = false;
+    end
+    
+    function term(this) %#ok unused input
+    end
+  end
+end

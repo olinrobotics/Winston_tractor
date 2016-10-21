@@ -1,0 +1,118 @@
+% Executes GUARD command.
+% 
+%   usage: guard [arg1] [arg2] ... [argN]
+%
+%     arg: command to execute
+function guard(varargin)
+persistent cfg msgExec
+
+if(isempty(cfg))
+  % turn off warnings
+  warning('off', 'MATLAB:class:cannotUpdateClass');
+  warning('off','MATLAB:intMathOverflow');
+  warning('off', 'MATLAB:TIMER:STARTDELAYPRECISION');
+  
+  % initialize paths
+  local = fileparts(mfilename('fullpath'));
+  addpath(fullfile(local, 'ARD'));
+  addpath(fullfile(local, 'UW'));
+  addpath(fullfile(local, 'OC'));
+  Msg.Proto.addpath(local);
+  
+  % get config
+  cfg = JSONRead('guard.json');
+  msgExec = Msg.Exec.getInstance(cfg.timeWarp);
+end
+
+% default display help information
+if(nargin==0)
+  help(mfilename);
+end
+
+% execute the applications
+for arg = 1:nargin
+  switch(varargin{arg})
+    case 'start'
+      systemStart('+Msg/MsgSwitch', cfg.subURI, cfg.pubURI);
+    case 'startLocal'
+      systemStart('+Msg/MsgSwitch', cfg.subURILocal, cfg.pubURILocal);
+      systemStart('+Msg/MsgBridge', cfg.subURILocal, cfg.pubURI);
+    case 'stop'
+      dbclear('all');
+      msgExec.delete();
+      close('all', 'force');
+      evalin('base', 'close all');
+      clear('classes'); %#ok destruction sequence
+      evalin('base', 'clear classes');
+      clear('java'); %#ok destruction sequence
+      evalin('base', 'clear java');
+      systemStop('ARD');
+      systemStop('UW');
+      systemStop('OC');
+      systemStop('Msg');
+      break;  
+    case 'ARDTalker'
+      msgExec.start(ARDTalker, cfg.subURI, cfg.pubURI);
+    case 'ARDListener'
+      msgExec.start(ARDListener, cfg.subURI, cfg.pubURI);
+    case 'Test'
+      terminalStart('ARD/ARDWatcher', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDTalker, cfg.subURI, cfg.pubURI);
+    case 'TestLocal'
+      terminalStart('ARD/ARDWatcher', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDListener, cfg.subURILocal, cfg.pubURILocal);
+      msgExec.start(ARDTalker, cfg.subURI, cfg.pubURILocal);
+    case 'TestLabView'
+      terminalStart('ARD/ARDWatcher', cfg.subURI, cfg.pubURI);
+      msgExec.start(OCDriver, cfg.subURI, cfg.pubURI);
+      systemStart('OC/OCNavSensor', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDListener, cfg.subURI, cfg.pubURI);
+    case 'TestFlyCap'
+      systemStart('OC/OCCamera', cfg.subURILocal, cfg.pubURILocal);
+      msgExec.start(ARDListener, cfg.subURILocal, cfg.pubURILocal);
+      terminalStart('ARD/ARDWatcher', cfg.subURILocal, cfg.pubURILocal);
+      systemStart('ARD/ARDClock', cfg.subURILocal, cfg.pubURILocal);
+    case 'TestAutonomy'
+      msgExec.start(ARDAutonomy, cfg.subURI, cfg.pubURI);
+      terminalStart('ARD/ARDWatcher', cfg.subURI, cfg.pubURI);
+      ARDCommander;
+    case 'OCDriver'
+      msgExec.start(OCDriver, cfg.subURI, cfg.pubURILocal);
+    case 'TestTractorSim'
+      % target
+      msgExec.start(OCTractorSimTarget, cfg.subURI, cfg.pubURI); % must be constructed before own   
+      systemStart('OC/OCNavSensor', cfg.subURI, cfg.pubURI);
+      % core and ownship
+      msgExec.start(OCTractorSimOwn, cfg.subURI, cfg.pubURI); % must be constructed after target
+      %systemStart('ARD/ARDRepeater', cfg.subURI, cfg.pubURI); % BROKEN INFINITE LOOP
+      msgExec.start(ARDVision, cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDEstimator', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDDriver, cfg.subURI, cfg.pubURI);
+      msgExec.start(OCPlanner, cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDAutonomy, cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDClock', cfg.subURI, cfg.pubURI);
+      % remote
+      ARDCommander;
+      terminalStart('ARD/ARDWatcher', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDPlotter, cfg.subURI, cfg.pubURI); 
+    case 'TestSatSim'
+      % target
+      msgExec.start(ARDSatSimTarget, cfg.subURI, cfg.pubURILocal); % must be constructed before own
+      msgExec.start(ARDDriverTarget, cfg.subURI, cfg.pubURILocal);
+      % ownship
+      msgExec.start(ARDSatSimOwn, cfg.subURI, cfg.pubURILocal); % must be constructed after target
+      msgExec.start(ARDDriverOwn, cfg.subURI, cfg.pubURILocal);
+      %systemStart('ARD/ARDRepeater', cfg.subURI, cfg.pubURILocal); % BROKEN INFINITE LOOP
+      msgExec.start(ARDVision, cfg.subURILocal, cfg.pubURILocal);
+      % core
+      terminalStart('ARD/ARDWatcher', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDAutonomy, cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDPlanner, cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDEstimator', cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDClock', cfg.subURI, cfg.pubURI);
+      ARDCommander;
+    otherwise
+      system(['./guard ', varargin{arg}]);
+  end
+end
+end

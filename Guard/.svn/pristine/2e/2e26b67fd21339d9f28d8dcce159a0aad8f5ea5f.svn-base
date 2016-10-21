@@ -1,0 +1,216 @@
+namespace Msg
+{
+  Cmd::Cmd(App* msgApp, const double& msgAckPeriod, const double& msgTimeWarp)
+  {
+    this->msgApp = msgApp;
+    if(this->msgApp->msgAppID.empty())
+    {
+      throw("Cmd: App must be initialized before Cmd");
+    }
+    this->msgAckPeriod = msgAckPeriod;
+    this->msgTimeWarp = msgTimeWarp;
+    this->msgStatus = Msg::Cmd::OFF;
+    this->msgAckTimer = hidi::getCurrentTime();
+    this->msgCmdTopic = "";
+    this->msgApp->msgCmd = this;
+  }
+  
+  bool Cmd::init(void)
+  {
+    return true;
+  }
+  
+  void Cmd::idle(const std::string& inbox)
+  {
+    return;
+  }
+  
+  bool Cmd::run(const std::string& inbox)
+  {
+    return false;
+  }
+  
+  void Cmd::term(void)
+  {
+    return;
+  }
+  
+  void Cmd::msgTopicsCmd(std::vector< std::string >& sub)
+  {
+    sub.clear();
+    sub.push_back(this->cacheMsgCmdTopic());
+    return;
+  }
+  
+  void Cmd::msgProcessCmd(const std::string& inbox)
+  {
+    bool done;
+    std::string type;
+    std::string id;
+    std::string pbCmd;
+    msg::Cmd msgCmd;
+    msg::Ack msgAck;
+    msg::Mode mode;
+    
+    // if input is a command for this application
+    if(Msg::Proto::isTopic(inbox, this->cacheMsgCmdTopic()))
+    {
+      // unpack the command
+      Msg::Proto::unpack(inbox, type, id, pbCmd);
+      
+      // if the application ID matches this application
+      if(!id.compare(this->msgApp->msgAppID))
+      {
+        // unpack the command
+        msgCmd.ParseFromString(pbCmd);
+        mode = msgCmd.mode();
+        
+        // set command
+        this->setMsgCmd(mode);
+      }
+    }
+    else // input is not a command (may be empty)
+    {
+      // robustly run the appropriate function
+      try
+      {
+        switch(this->msgStatus)
+        {
+          case Msg::Cmd::INIT:
+          {
+            done = this->init();
+            if(done)
+            {
+              this->msgStatus = Msg::Cmd::IDLE;
+            }
+            break;
+          }
+          case Msg::Cmd::IDLE:
+          {
+            this->idle(inbox);
+            break;
+          }
+          case Msg::Cmd::RUN:
+          {
+            done = this->run(inbox);
+            if(done)
+            {
+              this->msgStatus = Msg::Cmd::IDLE;
+            }
+            break;
+          }
+          default:
+          {
+            break; // nop
+          }
+        }
+      }
+      catch(...)
+      {
+        this->msgStatus = Msg::Cmd::RECOVER;
+        throw;
+      }
+    }
+    
+    // if enough time has passed
+    if((hidi::getCurrentTime()-this->msgAckTimer)>=(this->msgAckPeriod/this->msgTimeWarp))
+    {
+      // reset the timer
+      this->msgAckTimer = hidi::getCurrentTime();
+      
+      // convert status to mode
+      switch(this->msgStatus)
+      {
+        case Msg::Cmd::IDLE:
+        {
+          mode = static_cast<msg::Mode>(Msg::Cmd::IDLE);
+          break;
+        }
+        case Msg::Cmd::RUN:
+        {
+          mode = static_cast<msg::Mode>(Msg::Cmd::RUN);
+          break;
+        }
+        default: // {OFF, INIT, RECOVER, TERM}
+        {
+          mode = static_cast<msg::Mode>(Msg::Cmd::OFF);
+          break;
+        }
+      }
+      
+      // send acknowledgement
+      msgAck.set_mode(mode);
+      this->msgApp->send(Msg::Proto::pack("msg.Ack", this->msgApp->msgAppID, msgAck.SerializeAsString()));
+    }
+  }
+  
+  void Cmd::setMsgCmd(msg::Mode msgMode)
+  {
+    switch(this->msgStatus)
+    {
+      case Msg::Cmd::INIT:
+      {
+        if(static_cast<msg::Mode>(Msg::Cmd::OFF)==msgMode)
+        {
+          this->msgStatus = Msg::Cmd::TERM;
+          this->setMsgCmd(msgMode);
+        }
+        break;
+      }
+      case Msg::Cmd::IDLE: // fall through
+      case Msg::Cmd::RUN:
+      {
+        switch(msgMode)
+        {
+          case msg::RUN:
+          {
+            this->msgStatus = Msg::Cmd::RUN;
+            break;
+          }
+          case msg::IDLE:
+          {
+            this->msgStatus = Msg::Cmd::IDLE;
+            break;
+          }
+          default: // OFF
+          {
+            this->msgStatus = Msg::Cmd::RECOVER;
+            this->setMsgCmd(msgMode);
+            break;
+          }
+        }
+        break;
+      }
+      case Msg::Cmd::RECOVER:
+      {
+        this->msgStatus = Msg::Cmd::TERM;
+        this->setMsgCmd(msgMode);
+        break;
+      }
+      case Msg::Cmd::TERM:
+      {
+        this->term();
+        this->msgStatus = Msg::Cmd::OFF;
+        break;
+      }
+      default: // OFF
+      {
+        if(static_cast<msg::Mode>(Msg::Cmd::IDLE)==msgMode)
+        {
+          this->msgStatus = Msg::Cmd::INIT;
+          this->setMsgCmd(msgMode);
+        }
+        break;
+      }
+    }
+  }
+  
+  std::string Cmd::cacheMsgCmdTopic()
+  {
+    if(this->msgCmdTopic.empty())
+    {
+      this->msgCmdTopic = Msg::Proto::topic("msg.Cmd", this->msgApp->msgAppID);
+    }
+    return (this->msgCmdTopic);
+  }
+}

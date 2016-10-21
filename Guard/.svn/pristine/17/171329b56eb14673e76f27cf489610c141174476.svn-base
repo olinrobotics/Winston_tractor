@@ -1,0 +1,85 @@
+% An application that remotely controls multiple vehicles, driving them toward desired states.
+classdef ARDDriver < Msg.App & Msg.Cmd & Msg.Time & Msg.Log
+  properties (GetAccess = private, SetAccess = private)
+    vehicleID
+    wayTopic
+    stateTopic
+    waystates
+    x
+    v
+  end
+  
+  methods (Access = public)
+    function this = ARDDriver(vehicleID)
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.ctrlTick, cfg.ctrlTick, cfg.maxLength);
+      this = this@Msg.Cmd(cfg.ackPeriod, cfg.timeWarp);
+      this = this@Msg.Time(cfg.timeSourceID, cfg.timeWarp);
+      this = this@Msg.Log();
+      this.vehicleID = vehicleID;
+      this.wayTopic = Msg.Proto.topic('nav.Waystates', vehicleID);
+      this.stateTopic = Msg.Proto.topic('nav.FusedState', vehicleID);
+      this.x = [];
+      this.v = [];
+    end
+    
+    function sub = topics(this)
+      sub{1, 1} = this.wayTopic;
+      sub{2, 1} = this.stateTopic;
+    end
+    
+    function done = init(this)
+      done = this.isTimeSet();
+    end
+    
+    function idle(this, inbox)
+      if(isempty(inbox))
+        this.sendCtrl(0.0);
+      end
+    end
+    
+    function done = run(this, inbox)
+      done = false;
+      if(isempty(inbox))
+        % TODO: compute intelligent control signals that depend on the docking state
+        dt = 1.0/str2double(FlightGear.Config.hz);
+        if(~isempty(this.x))
+          dx = this.xTarget-this.x-ARDDriver.dIdeal;
+          vDesired = 0.1*dx;
+          f = 0.1*(vDesired-this.v)/dt;
+          this.log('dx=%f;vDesired=%f;f=%f', dx, vDesired, f);
+        else
+          f = 0.0;
+        end
+        this.sendCtrl(f);
+        
+      elseif(Msg.Proto.isTopic(inbox, this.wayTopic))
+        [~, ~, this.waystates] = Msg.Proto.unpack(inbox);
+        
+      elseif(Msg.Proto.isTopic(inbox, this.stateTopic))
+        [~, ~, pb] = Msg.Proto.unpack(inbox);
+        rLat = earth.WGS84.radiusOfCurvature(pb.getLatR())+pb.getAltM();
+        this.x = rLat*pb.getLatR();
+        this.v = pb.getForwardDeltaM()/pb.getTimeDeltaS();
+      end
+    end
+    
+    function term(this)
+      this.sendCtrl(0.0);
+    end
+  end
+  
+  methods (Access = private)
+    function sendCtrl(this, f)
+      pbCtrl = nav.CtrlBuilder();
+      pbCtrl.addUReal(f);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUReal(0.0);
+      pbCtrl.addUInt(0);
+      this.send(Msg.Proto.pack('nav.Ctrl', this.vehicleID, pbCtrl));
+    end
+  end
+end

@@ -1,0 +1,116 @@
+#include "+Msg/App.h"
+#include "+Msg/Exec.h"
+#include "+Msg/Proto.h"
+#include "JSONRead.h"
+
+// protocol
+#include "nav/nav.pb.cc"
+
+// configuration
+static JSONRead cfg("guard.json");
+static const std::string ownID = cfg.get<std::string>("ownID");
+
+class OCDriver : virtual public Msg::App, virtual public Msg::Cmd, virtual public Msg::Log
+{
+public:
+  OCDriver(void) :
+    Msg::App(ownID, cfg.get<double>("fastTick"), cfg.get<double>("ctrlTick"), cfg.get<double>("maxLength")),
+    Msg::Cmd(this, cfg.get<double>("ackPeriod"), cfg.get<double>("timeWarp")),
+    Msg::Log(this)
+  {
+    this->stateTopic = Msg::Proto::topic("nav.Waystates", cfg.get<std::string>("ownID"));
+  }
+
+  void topics(std::vector< std::string >& sub)
+  {
+    sub.clear();
+    sub.push_back(this->stateTopic);
+    return;
+  }
+  
+  bool init(void)
+  {
+    return true;
+  }
+    
+  void idle(const std::string& inbox)
+  {
+    std::string type;
+    std::string id;
+    std::string data;
+    if(inbox.empty())
+    {
+      this->sendCtrl(3000, 3500);
+    }
+    else if(Msg::Proto::isTopic(inbox, this->stateTopic))
+    {
+      Msg::Proto::unpack(inbox, type, id, data);
+      this->waystates.ParseFromString(data);
+    }
+    return;
+  }
+    
+  bool run(const std::string& inbox)
+  {
+    std::string type;
+    std::string id;
+    std::string data;
+    if(inbox.empty())
+    {
+      this->sendCtrl(3000, 0);
+    }
+    else if(Msg::Proto::isTopic(inbox, this->stateTopic))
+    {
+      Msg::Proto::unpack(inbox, type, id, data);
+      this->waystates.ParseFromString(data);
+    }
+    return false;
+  }
+    
+  void term(void)
+  {
+    this->sendCtrl(3000, 3500);
+    return;
+  }
+  
+private:
+  nav::Waystates waystates;
+  std::string stateTopic;
+  
+  void sendCtrl(const int32_t& uTurn, const int32_t& uSpeed)
+  {
+    nav::LabViewIn lvin;
+    nav::Ctrl ctrl;
+    union
+    {
+      struct U
+      {
+        int32_t turn;
+        int32_t speed;
+      } u;
+      unsigned char data[8];
+    };
+    u.turn = uTurn;
+    u.speed = uSpeed;
+    lvin.set_data((void*)data, 8);
+    this->send(Msg::Proto::pack("nav.LabViewIn", ownID, lvin.SerializeAsString()));
+    ctrl.add_uint(u.turn);
+    ctrl.add_uint(u.speed);
+    this->send(Msg::Proto::pack("nav.Ctrl", ownID, ctrl.SerializeAsString()));
+    this->log("uTurn = %d uSpeed = %d", u.turn, u.speed);
+    return;
+  }
+};
+
+int main(int argc, char* argv[])
+{
+  if(argc<3)
+  {
+    printf("usage: OC/OCDriver subURI pubURI\n");
+    return EXIT_FAILURE;
+  }
+  OCDriver app;
+  Msg::Exec* msgExec = Msg::Exec::getInstance(cfg.get<double>("timeWarp"));
+  msgExec->start(&app, argv[1], argv[2]);
+  return EXIT_FAILURE;
+}

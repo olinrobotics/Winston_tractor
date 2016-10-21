@@ -1,0 +1,123 @@
+<?xml version="1.0"?>
+<PropertyList> 
+  <generic>
+    <input>
+      
+      <line_separator>\r\n</line_separator>
+      <var_separator>,</var_separator>
+      
+      <chunk>
+        <name>latitude-deg</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/position/latitude-deg</node>
+      </chunk>
+      
+      <chunk>
+        <name>longitude-deg</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/position/longitude-deg</node>
+      </chunk>
+      
+      <chunk>
+        <name>altitude-ft</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/position/altitude-ft</node>
+      </chunk>
+      
+      <chunk>
+        <name>roll-deg</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/orientation/roll-deg</node>
+      </chunk>
+      
+      <chunk>
+        <name>pitch-deg</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/orientation/pitch-deg</node>
+      </chunk>
+      
+      <chunk>
+        <name>heading-deg</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/orientation/heading-deg</node>
+      </chunk>
+
+      <chunk>
+        <name>yaw-deg</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/orientation/yaw-deg</node>
+      </chunk>
+      
+      <chunk>
+        <name>roll-rate-degps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/orientation/roll-rate-degps</node>
+      </chunk>
+      
+      <chunk>
+        <name>pitch-rate-degps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/orientation/pitch-rate-degps</node>
+      </chunk>
+      
+      <chunk>
+        <name>yaw-rate-degps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/orientation/yaw-rate-degps</node>
+      </chunk>
+      
+      <chunk>
+        <name>uBody-fps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/velocities/uBody-fps</node>
+      </chunk>
+      
+      <chunk>
+        <name>vBody-fps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/velocities/vBody-fps</node>
+      </chunk>
+      
+      <chunk>
+        <name>wBody-fps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/velocities/wBody-fps</node>
+      </chunk>
+      
+      <chunk>
+        <name>speed-north-fps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/velocities/speed-north-fps</node>
+      </chunk>
+      
+      <chunk>
+        <name>speed-east-fps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/velocities/speed-east-fps</node>
+      </chunk>
+      
+      <chunk>
+        <name>speed-down-fps</name>
+        <format>%f</format>
+        <type>double</type>
+        <node>/velocities/speed-down-fps</node>
+      </chunk>
+      
+    </input>
+  </generic>
+</PropertyList>

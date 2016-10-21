@@ -1,0 +1,63 @@
+% An application that simulates the ownship interface of a tractor.
+classdef OCTractorSimOwn < ARDSim
+  properties (GetAccess = public, Constant = true)
+    offsetLatR = -0.000001;
+    offsetLonR = 0.0;
+    offsetAltM = -OCTractorSimTarget.dockDownM;
+    latR0 = OCTractorSimTarget.latR0+OCTractorSimOwn.offsetLatR;
+    lonR0 = OCTractorSimTarget.lonR0+OCTractorSimOwn.offsetLonR;
+    altR0 = OCTractorSimTarget.altM0+OCTractorSimOwn.offsetAltM;
+    xReal0 = [zeros(3, 1); OCTractorSimOwn.latR0; OCTractorSimOwn.lonR0; OCTractorSimOwn.altR0; zeros(3, 1)];
+    uInt0 = [int32(2000); int32(2500)];
+    fovR = str2double(FlightGear.Config.hfov)*math.DEGTORAD;
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    startTime
+    isPolling
+    imgPeriod
+  end
+  
+  methods (Access = public)
+    function this = OCTractorSimOwn()
+      cfg = JSONRead('guard.json');
+      dynamicModel = OCDynamics(ARDSim.simPeriod);
+      this = this@ARDSim(cfg.ownID, dynamicModel, OCTractorSimOwn.xReal0, zeros(0, 1), zeros(0, 1, 'int32'),...
+        OCTractorSimOwn.uInt0);
+      [pbRPY, pbLatLon, pbAlt] = this.getState();
+      this.graphicModel = FlightGear.Camera({this.port}, pbLatLon.getLatR()*math.RADTODEG,...
+        pbLatLon.getLonR()*math.RADTODEG, pbAlt.getAltM()*math.MTOFT, pbRPY.getRollR()*math.RADTODEG,...
+        pbRPY.getPitchR()*math.RADTODEG, pbRPY.getYawR()*math.RADTODEG);
+      this.startTime = -inf;
+      this.isPolling = false;
+      this.imgPeriod = cfg.imgPeriod;
+    end
+
+    function done = init(this)
+      done = init@ARDSim(this); % checks that time is set
+    end
+    
+    function done = run(this, inbox)
+      success = false;
+      if(this.isPolling)
+        [success, img] = this.graphicModel.pollImage();
+      else
+        time = this.getTime();
+        if((time-this.startTime)>this.imgPeriod)
+          [success, img] = this.graphicModel.pollImage();
+          this.startTime = time;
+          this.isPolling = true;
+        end
+      end
+        if(success)
+          pbImg = nav.ImgBuilder();
+          pbImg.setTimeS(this.startTime);
+          pbImg.setFovR(OCTractorSimOwn.fovR);
+          pbSetImg(pbImg, img);
+          this.send(Msg.Proto.pack('nav.Img', this.vehicleID, pbImg));
+          this.isPolling = false;
+        end
+        done = run@ARDSim(this, inbox);
+    end
+  end
+end

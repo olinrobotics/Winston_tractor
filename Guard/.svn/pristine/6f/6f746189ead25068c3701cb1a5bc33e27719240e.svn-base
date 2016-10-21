@@ -1,0 +1,340 @@
+//=============================================================================
+// Copyright © 2008 Point Grey Research, Inc. All Rights Reserved.
+//
+// This software is the confidential and proprietary information of Point
+// Grey Research, Inc. ("Confidential Information").  You shall not
+// disclose such Confidential Information and shall use it only in
+// accordance with the terms of the license agreement you entered into
+// with PGR.
+//
+// PGR MAKES NO REPRESENTATIONS OR WARRANTIES ABOUT THE SUITABILITY OF THE
+// SOFTWARE, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+// PURPOSE, OR NON-INFRINGEMENT. PGR SHALL NOT BE LIABLE FOR ANY DAMAGES
+// SUFFERED BY LICENSEE AS A RESULT OF USING, MODIFYING OR DISTRIBUTING
+// THIS SOFTWARE OR ITS DERIVATIVES.
+//=============================================================================
+//=============================================================================
+// $Id: FlyCapture2Test.cpp,v 1.19 2010-03-11 22:58:37 soowei Exp $
+//=============================================================================
+
+#include "stdafx.h"
+#include <iostream>
+#include <sstream>
+#include <cstdio>
+#include "FlyCapture2.h"
+
+#include "+Msg/App.h"
+#include "+Msg/Time.h"
+#include "+Msg/Proto.h"
+#include "+Msg/Transport.h"
+#include "+hidi/pause.h"
+#include "+math/math.h"
+#include "JSONRead.h"
+
+// protocol
+#include "nav/nav.pb.cc"
+
+// configuration
+static JSONRead cfg("guard.json");
+static std::string ownID = cfg.get<std::string>("ownID");
+
+using namespace FlyCapture2;
+using namespace std;
+
+class OCCamera : virtual public Msg::App, virtual public Msg::Time
+{
+public:  
+  OCCamera(void) :
+    Msg::App("OCCamera"),
+    Msg::Time(this, cfg.get<std::string>("timeSourceID"), cfg.get<double>("timeWarp"))
+  {}
+  
+  void processImage(const unsigned char* data, const unsigned int numRows, const unsigned int numCols, const unsigned int numStrides)
+  {
+    std::string outbox;
+    nav::Img img;
+    unsigned char* rgb;
+    unsigned int row;
+    unsigned int col;
+    unsigned int layer;
+    unsigned int p;
+    
+    // if time is set
+    if(this->isTimeSet())
+    {
+      rgb = new unsigned char[numRows*numCols*3];
+
+      // get time stamp and fill in the data structure
+      img.set_times(this->getTime());
+      img.set_fovr(56.15*math::DEGTORAD);
+      img.set_steps(numCols);
+      img.set_strides(numRows);
+      img.set_layers(3);
+      
+      p = 0;
+      for(layer = 0; layer<3; ++layer)
+      {
+        for(row = 0; row<numRows; ++row)
+        {
+          for(col = 0; col<numCols; ++col)
+          {
+            rgb[p++] = data[col+numStrides*row+layer];
+          }
+        }
+      }
+
+      // copy into data output
+      img.set_data(rgb, numRows*numCols*3);
+
+      // free memory
+      delete[] rgb;
+
+      // serialize output
+      Msg::Proto::pack("nav.Img", ownID, img.SerializeAsString(), outbox);
+      
+      // send output
+      this->send(outbox);
+    }
+    return;
+  }
+};
+
+static void OCCameraWrapper(const unsigned char* data, const unsigned int numRows, const unsigned int numCols, const unsigned int numStrides)
+{
+  // variables that will created during the first function call
+  static Msg::Transport transport(cfg.get<std::string>("subURI"), cfg.get<std::string>("pubURI"));
+  static OCCamera app;
+  static bool init = false;
+  
+  // temporary variables
+  size_t k;
+  std::vector< std::string > msgTopics;
+  std::string message;
+  
+  // set subscriptions during the first function call
+  if(!init)
+  {
+    app.msgTopics(msgTopics);
+    for(k = 0; k<msgTopics.size(); ++k)
+    {
+      transport.subscribe(msgTopics[k]);
+    }
+    init = true;
+  }
+  
+  // receive and process all time stamp messages
+  transport.receive(message);
+  while(!message.empty())
+  {
+    app.msgProcess(message);
+    transport.receive(message);
+  }
+  
+  // process measurements
+  app.processImage(data, numRows, numCols, numStrides);
+  
+  // send outgoing messages
+  for(k = 0; k<app.msgOutbox.size(); ++k)
+  {
+    transport.send(app.msgOutbox[k]);
+  }
+      
+  // clear the outbox
+  app.msgClear();
+  return;
+}
+
+void PrintBuildInfo()
+{
+	FC2Version fc2Version;
+	Utilities::GetLibraryVersion( &fc2Version );
+
+	ostringstream version;
+	version << "FlyCapture2 library version: " << fc2Version.major << "." << fc2Version.minor << "." << fc2Version.type << "." << fc2Version.build;
+	cout << version.str() << endl;
+
+	ostringstream timeStamp;
+	timeStamp <<"Application build date: " << __DATE__ << " " << __TIME__;
+	cout << timeStamp.str() << endl << endl;
+}
+
+void PrintCameraInfo( CameraInfo* pCamInfo )
+{
+	cout << endl;
+	cout << "*** CAMERA INFORMATION ***" << endl;
+	cout << "Serial number -" << pCamInfo->serialNumber << endl;
+	cout << "Camera model - " << pCamInfo->modelName << endl;
+	cout << "Camera vendor - " << pCamInfo->vendorName << endl;
+	cout << "Sensor - " << pCamInfo->sensorInfo << endl;
+	cout << "Resolution - " << pCamInfo->sensorResolution << endl;
+	cout << "Firmware version - " << pCamInfo->firmwareVersion << endl;
+	cout << "Firmware build time - " << pCamInfo->firmwareBuildTime << endl << endl;
+
+}
+
+void PrintError( Error error )
+{
+	error.PrintErrorTrace();
+}
+
+int RunSingleCamera( PGRGuid guid )
+{
+
+	Error error;
+	Camera cam;
+
+	// Connect to a camera
+	error = cam.Connect(&guid);
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+
+	// Get the camera information
+	CameraInfo camInfo;
+	error = cam.GetCameraInfo(&camInfo);
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+	PrintCameraInfo(&camInfo);
+
+	// Get the camera configuration
+	FC2Config config;
+	error = cam.GetConfiguration( &config );
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+
+	// Set the number of driver buffers used to 10.
+	config.numBuffers = 10;
+
+	// Set the camera configuration
+	error = cam.SetConfiguration( &config );
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+
+	// Start capturing images
+	error = cam.StartCapture();
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+
+	Image rawImage;
+	unsigned char* rgbData;
+	unsigned int numRows;
+	unsigned int numCols;
+	unsigned int numStrides;
+
+	for ( int imageCnt=0; ; imageCnt++ )
+	{
+		// Retrieve an image
+		error = cam.RetrieveBuffer( &rawImage );
+		if (error != PGRERROR_OK)
+		{
+			PrintError( error );
+			continue;
+		}
+
+		cout << "Grabbed image " << imageCnt << endl;
+
+		// Create a converted image
+		Image convertedImage;
+
+		// Convert the raw image
+		error = rawImage.Convert( PIXEL_FORMAT_RGB, &convertedImage );
+		if (error != PGRERROR_OK)
+		{
+			PrintError( error );
+			return -1;
+		}
+
+	    rgbData = convertedImage.GetData();
+	    numRows = convertedImage.GetRows();
+	    numCols = convertedImage.GetCols();
+	    numStrides = convertedImage.GetStride();
+
+            OCCameraWrapper(rgbData, numRows, numCols, numStrides);
+	}
+
+	// Stop capturing images
+	error = cam.StopCapture();
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+
+	// Disconnect the camera
+	error = cam.Disconnect();
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+
+	return 0;
+}
+
+int main(int /*argc*/, char** /*argv*/)
+{
+	PrintBuildInfo();
+
+	Error error;
+
+	// Since this application saves images in the current folder
+	// we must ensure that we have permission to write to this folder.
+	// If we do not have permission, fail right away.
+	FILE* tempFile = fopen("test.txt", "w+");
+	if (tempFile == NULL)
+	{
+		cout << "Failed to create file in current folder.  Please check permissions." << endl;
+		return -1;
+	}
+	fclose(tempFile);
+	remove("test.txt");
+
+	BusManager busMgr;
+	unsigned int numCameras;
+	error = busMgr.GetNumOfCameras(&numCameras);
+	if (error != PGRERROR_OK)
+	{
+		PrintError( error );
+		return -1;
+	}
+
+	cout << "Number of cameras detected: " << numCameras << endl;
+
+	for (unsigned int i=0; i < numCameras; i++)
+	{
+		PGRGuid guid;
+		error = busMgr.GetCameraFromIndex(i, &guid);
+		if (error != PGRERROR_OK)
+		{
+			PrintError( error );
+			return -1;
+		}
+
+		RunSingleCamera( guid );
+	}
+
+	cout << "Done! Press Enter to exit..." << endl;
+	cin.ignore();
+
+	return 0;
+}
+
+
+
+
+

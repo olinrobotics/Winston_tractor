@@ -1,0 +1,47 @@
+#include "+Msg/App.h"
+#include "+Msg/Exec.h"
+#include "+Msg/Proto.h"
+#include "JSONRead.h"
+
+// configuration
+static JSONRead cfg("guard.json");
+
+// An application that logs heartbeats.
+class ARDVisionHelper : virtual public Msg::App
+{
+public:
+  ARDVisionHelper(void) :
+    Msg::App("ARDVisionHelper", cfg.get<double>("ctrlTick"))
+  {}
+
+  void topics(std::vector< std::string >& sub)
+  {
+    sub.clear();
+    sub.push_back(Msg::Proto::topic("nav.RelFusedState", cfg.get<std::string>("ownID")));
+    return;
+  }
+    
+  void process(const std::string& inbox)
+  {
+    std::string topic;
+    std::string id;
+    std::string data;
+    std::string outbox;
+    Msg::Proto::unpack(inbox, topic, id, data);
+    this->send(Msg::Proto::pack(topic, this->msgAppID, data));
+    return;
+  }
+};
+
+int main(int argc, char* argv[])
+{
+  if(argc<3)
+  {
+    printf("usage: ARDVisionHelper subURI pubURI\n");
+    return EXIT_FAILURE;
+  }
+  ARDVisionHelper app;
+  Msg::Exec* msgExec = Msg::Exec::getInstance(cfg.get<double>("timeWarp"));
+  msgExec->start(&app, argv[1], argv[2]);
+  return EXIT_FAILURE;
+}

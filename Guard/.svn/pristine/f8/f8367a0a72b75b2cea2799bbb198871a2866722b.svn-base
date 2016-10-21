@@ -1,0 +1,51 @@
+% An application that simulates the target interface of a satellite (which may or may not be controllable).
+classdef OCTractorSimTarget < ARDSim
+  properties (GetAccess = public, Constant = true)
+    fgType = '';%'Target';
+    vehicleModelName = 'CartBall';
+    latR0 = 42.2940300249*math.DEGTORAD;
+    lonR0 = -71.264597111*math.DEGTORAD;
+    altM0 = 0.0;
+    xReal0 = [0;0;-pi/2;...
+      OCTractorSimTarget.latR0;...
+      OCTractorSimTarget.lonR0;...
+      OCTractorSimTarget.altM0;...
+      zeros(3, 1)];
+    uInt0 = [OCDynamics.kssInv(0.0); OCDynamics.vssInv(0.0)];
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    cfg
+  end
+  
+  methods (Access = public)
+    function this = OCTractorSimTarget()
+      cfg = JSONRead('guard.json');
+      dynamicModel = OCDynamics(cfg.ctrlTick);
+      this = this@ARDSim(cfg.targetID, OCTractorSimTarget.fgType, OCTractorSimTarget.vehicleModelName, dynamicModel,...
+        OCTractorSimTarget.xReal0, zeros(0, 1), zeros(0, 1, 'int32'), OCTractorSimTarget.uInt0);
+      this.cfg = cfg;
+    end
+    
+    function process(this, inbox)
+      process@ARDSim(this, inbox);
+      if(isempty(inbox)&&this.isReady())
+        % simulate navigation sensors
+        pbRPY = this.getRPY();
+        pbLatLon = this.getLatLon();
+        pbAlt = this.getAlt();
+        pbBodyRPYDelta = this.getBodyRPYDelta();
+        pbBodyFRDDelta = this.getBodyFRDDelta();
+        
+        this.send(Msg.Proto.pack('nav.RPY', this.cfg.targetID, pbRPY));
+        this.send(Msg.Proto.pack('nav.LatLon', this.cfg.targetID, pbLatLon));
+        this.send(Msg.Proto.pack('nav.Alt', this.cfg.targetID, pbAlt));
+        this.send(Msg.Proto.pack('nav.BodyRPYDelta', this.cfg.targetID, pbBodyRPYDelta));
+        this.send(Msg.Proto.pack('nav.BodyFRDDelta', this.cfg.targetID, pbBodyFRDDelta));
+        
+        this.log('YawD=%+06.1f LatD=%+013.9f LonD=%+014.9f', pbRPY.getYawR()*math.RADTODEG, pbLatLon.getLatR()*math.RADTODEG,...
+          pbLatLon.getLonR()*math.RADTODEG);
+      end
+    end
+  end
+end

@@ -1,0 +1,9 @@
+<?xml version = '1.0' encoding = 'UTF-8' ?>
+<PropertyList>
+    <sim>
+        <model>
+            <path>Aircraft/Camera/Models/Camera.xml</path>
+        </model>
+    </sim>
+</PropertyList>
+

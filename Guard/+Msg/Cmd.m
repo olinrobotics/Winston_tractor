@@ -1,0 +1,185 @@
+% Optionally inherited state machine that processes commands and manages application states.
+classdef Cmd < handle  
+  methods (Access = public)
+    function done = init(this) %#ok unused input
+      % Default application initialization method (derived class should override).
+      %
+      % @param[out] done indicates request to transition to idle state
+      done = true;
+    end
+    
+    function idle(this, inbox) %#ok unused input
+      % Default process for handling messages while in IDLE status (derived class should override).
+      %
+      % @param[in] inbox input message (may be empty)
+    end
+    
+    function done = run(this, inbox) %#ok unused input
+      % Default process for handling messages while in RUN status (derived class should override).
+      %
+      % @param[in]  inbox input message (may be empty)
+      % @param[out] done  indicates request to transition to idle state
+      done = false;
+    end
+    
+    function term(this) %#ok unused input
+      % Default terminate method (derived class should override).
+    end
+    
+    function sub = msgTopicsCmd(this)
+      sub{1} = this.cacheMsgCmdTopic();
+    end
+    
+    function msgProcessCmd(this, inbox)
+      % Handles application status and command levels.
+      
+      % if input is a command for this application
+      if(Msg.Proto.isTopic(inbox, this.cacheMsgCmdTopic()))
+        
+        % unpack the message
+        [~, ~, pb] = Msg.Proto.unpack(inbox);
+          
+        % unpack the command
+        mode = pbGetMsgMode(pb);
+        
+        % implement status transition
+        this.msgStatusTransition(mode);
+      end
+        
+      % robustly run the appropriate function
+      try
+        switch(this.msgStatus)
+          case Msg.Cmd.INIT
+            done = this.init();
+            if(done)
+              this.msgStatus = Msg.Cmd.IDLE;
+            end
+          case Msg.Cmd.IDLE
+            this.idle(inbox);
+          case Msg.Cmd.RUN
+            done = this.run(inbox);
+            if(done)
+              this.msgStatus = Msg.Cmd.IDLE;
+            end
+          case Msg.Cmd.RECOVER
+            % nothing
+          otherwise % Msg.Cmd.TERM
+            this.term();
+        end
+      catch err
+        this.msgStatus = Msg.Cmd.RECOVER;
+        rethrow(err);
+      end
+      
+      % if enough time has passed
+      if((hidi.getCurrentTime()-this.msgAckTimer)>=(this.msgAckPeriod/this.msgTimeWarp))
+
+        % reset the timer
+        this.msgAckTimer = hidi.getCurrentTime();
+
+        % send acknowledgement
+        pbMsgAck = msg.AckBuilder();
+        pbSetMsgMode(pbMsgAck, this.msgGetMode());
+        this.msgApp.send(Msg.Proto.pack('msg.Ack', this.msgApp.msgAppID, pbMsgAck));
+      end
+    end
+  end
+    
+  methods (Access = protected)
+    % Constructor (derived class must initialize).
+    %
+    % @param[in] msgAckPeriod minimum time between command acknowledgements
+    % @param[in] msgTimeWarp  time scaling parameter
+    function this = Cmd(msgAckPeriod, msgTimeWarp)
+      this.msgApp = this;
+      if(isempty(this.msgApp.msgAppID))
+        error('Cmd: App must be initialized before Cmd');
+      end
+      this.msgAckPeriod = msgAckPeriod;
+      this.msgTimeWarp = msgTimeWarp;
+      this.msgStatus = Msg.Cmd.OFF;
+      this.msgAckTimer = hidi.getCurrentTime();
+      this.msgCmdTopic = '';
+      this.msgApp.msgCmd = this;
+    end
+  end
+  
+  properties (GetAccess = private, Constant = true)
+    OFF = uint8(0);
+    IDLE = uint8(1);
+    RUN = uint8(2);
+    INIT = uint8(3);
+    RECOVER = uint8(4);
+    TERM = uint8(5);
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    msgApp;
+    msgAckPeriod;
+    msgTimeWarp;
+    msgStatus;
+    msgAckTimer;
+    msgCmdTopic;
+  end
+  
+  methods (Access = private)
+    function topic = cacheMsgCmdTopic(this)
+      if(isempty(this.msgCmdTopic))
+        this.msgCmdTopic = Msg.Proto.topic('msg.Cmd', this.msgApp.msgAppID);
+      end
+      topic = this.msgCmdTopic;
+    end
+
+    % Convert status to mode.
+    function msgMode = msgGetMode(this)
+      switch(this.msgStatus)
+        case Msg.Cmd.RUN
+          msgMode = Msg.Mode.RUN;
+        case Msg.Cmd.IDLE
+          msgMode = Msg.Mode.IDLE;
+        otherwise % {OFF, INIT, RECOVER, TERM}
+          msgMode = Msg.Mode.OFF;
+      end
+    end
+
+    function msgStatusTransition(this, msgMode)
+      % Implement status transition given a mode command.
+      %
+      % @param[in] mode requested command
+      switch(this.msgStatus)
+       case {Msg.Cmd.RUN, Msg.Cmd.IDLE}
+          switch(uint8(msgMode))
+            case uint8(Msg.Mode.RUN)
+              this.msgStatus = Msg.Cmd.RUN;
+            case uint8(Msg.Mode.IDLE)
+              this.msgStatus = Msg.Cmd.IDLE;
+            otherwise % Msg.Mode.OFF
+              this.msgStatus = Msg.Cmd.TERM;
+          end
+        case Msg.Cmd.INIT
+          switch(uint8(msgMode))
+            case {uint8(Msg.Mode.RUN), uint8(Msg.Mode.IDLE)}
+              % nothing
+            otherwise % Msg.Mode.OFF
+              this.msgStatus = Msg.Cmd.TERM;
+          end  
+        case Msg.Cmd.RECOVER
+          switch(uint8(msgMode))
+            case {uint8(Msg.Mode.RUN), uint8(Msg.Mode.IDLE)}
+              this.msgStatus = Msg.Cmd.IDLE;
+            otherwise % Msg.Mode.OFF
+              this.msgStatus = Msg.Cmd.TERM;
+          end
+        case Msg.Cmd.TERM
+          this.msgStatus = Msg.Cmd.OFF;
+        otherwise % Msg.Cmd.OFF
+          switch(uint8(msgMode))
+            case {uint8(Msg.Mode.RUN), uint8(Msg.Mode.IDLE)}
+              this.msgStatus = Msg.Cmd.INIT;
+            otherwise % Msg.Mode.OFF
+              % nothing
+          end
+      end
+    end
+  end
+end

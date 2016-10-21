@@ -1,0 +1,56 @@
+% An application that simulates the ownship interface of a satellite.
+classdef ARDSatSimOwn < ARDSim
+  properties (GetAccess = public, Constant = true)
+    dynamicModelName = 'ARDSimpleModel';
+    xReal0 = [earth.WGS84.majorRadius+100000; 0; 0; 0; 0; 0; sqrt(2)/2; 0; -sqrt(2)/2; 0];
+    fovR = str2double(FlightGear.Config.hfov)*math.DEGTORAD;
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    startTime
+    isPolling
+    imgPeriod
+  end
+  
+  methods (Access = public)
+    function this = ARDSatSimOwn()
+      cfg = JSONRead('guard.json');
+      dynamicModel = ARDDynamics(ARDSatSimOwn.dynamicModelName);
+      this = this@ARDSim(cfg.ownID, dynamicModel, ARDSatSimOwn.xReal0);
+      [pbRPY, pbLatLon, pbAlt] = this.getState();
+      this.graphicModel = FlightGear.Camera({this.port}, pbLatLon.getLatR()*math.RADTODEG,...
+        pbLatLon.getLonR()*math.RADTODEG, pbAlt.getAltM()*math.MTOFT, pbRPY.getRollR()*math.RADTODEG,...
+        pbRPY.getPitchR()*math.RADTODEG, pbRPY.getYawR()*math.RADTODEG);
+      this.startTime = -inf;
+      this.isPolling = false;
+      this.imgPeriod = cfg.imgPeriod;
+    end
+
+    function done = init(this)
+      done = init@ARDSim(this); % checks that time is set
+    end
+    
+    function done = run(this, inbox)
+      success = false;
+      if(this.isPolling)
+        [success, img] = this.graphicModel.pollImage();
+      else
+        time = this.getTime();
+        if((time-this.startTime)>this.imgPeriod)
+          [success, img] = this.graphicModel.pollImage();
+          this.startTime = time;
+          this.isPolling = true;
+        end
+      end
+        if(success)
+          pbImg = nav.ImgBuilder();
+          pbImg.setTimeS(this.startTime);
+          pbImg.setFovR(ARDSatSimOwn.fovR);
+          pbSetImg(pbImg, img);
+          this.send(Msg.Proto.pack('nav.Img', this.vehicleID, pbImg));
+          this.isPolling = false;
+        end
+        done = run@ARDSim(this, inbox);
+    end
+  end
+end

@@ -1,0 +1,189 @@
+% An application that issues commands and receives acknowledgements.
+classdef ARDCommander < Msg.App & Msg.Time & Msg.Log
+  properties (GetAccess = private, SetAccess = private)
+    ackPeriod
+    ackTimeout
+    cmdAppID
+    appCmd
+    appAck
+    gotAck
+    tSend
+  end
+  
+  methods (Access = public)
+    function this = ARDCommander(cmdAppID)
+      % Constructor.
+      
+      % check input
+      nApp = numel(cmdAppID);
+      if(nApp==0)
+        error('Commmander: Requires at least one application identifier.');
+      end
+      if(numel(unique(cmdAppID))~=nApp)
+        error('ARDCommander: Application identifiers must be unique.');
+      end
+      
+      % initialize base classes
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick, cfg.slowTick);
+      this = this@Msg.Time(cfg.timeSourceID, cfg.timeWarp);
+      this = this@Msg.Log();
+      
+      % initialize relative times
+      this.ackPeriod = cfg.ackPeriod;
+      this.ackTimeout = cfg.ackTimeout;
+      this.cmdAppID = cmdAppID;
+      
+      % set command states
+      this.appCmd = Msg.Mode.OFF;
+      this.appAck = repmat(Msg.Mode.OFF, nApp, 1);
+      this.gotAck = false(nApp, 1);
+      
+      % initial output
+      this.sendMsgCmd(Msg.Mode.OFF);
+    end
+
+    function sub = topics(this)
+      nApp = numel(this.cmdAppID);
+      sub = cell(nApp, 1);
+      for n = 1:nApp
+        sub{n} = Msg.Proto.topic('msg.Ack', this.cmdAppID{n});
+      end
+    end
+    
+    function process(this, inbox)
+      % process inbox
+      
+      this.processInbox(inbox);
+      
+      % compute minimum mode
+      appMin = Msg.Mode(min(this.appAck));
+      
+      % compute whether applications are synchronized with each other
+      appSync = all(this.appAck==appMin);
+      
+      % compute application reset criterion
+      appReset = (this.appCmd==Msg.Mode.RUN)&&(appMin==Msg.Mode.OFF);
+      
+      % compute short time passed
+      shortTimePassed = this.tock(this.tSend)>=this.ackPeriod;
+      
+      % compute long time passed
+      longTimePassed = this.tock(this.tSend)>=this.ackTimeout;
+      
+      % if short time has passed
+      if(shortTimePassed)
+        
+        % if long time has passed
+        if(longTimePassed)
+          
+          % for each application
+          for n = 1:numel(this.cmdAppID)
+            
+            % if command has not been acknowledged
+            if(~this.gotAck(n))
+              
+              % treat as OFF
+              this.appAck(n) = Msg.Mode.OFF;
+            end
+          end
+        end
+        
+        % if any application has reset
+        if(appReset)
+          
+          % send IDLE command
+          this.sendMsgCmd(Msg.Mode.IDLE);
+          
+          % elseif application minimum is equal to command
+        elseif(appMin==this.appCmd)
+          
+          % if applications are synchronized with each other
+          if(appSync)
+            
+            % send next command
+            this.sendMsgCmd(ARDCommander.modeUp(this.appCmd));
+            
+            % else applications are not synchronized with each other
+          else
+            
+            % resend command
+            this.sendMsgCmd(this.appCmd);
+            
+          end
+          
+          % else application minimum is higher than command
+        else
+          
+          % resend command
+          this.sendMsgCmd(this.appCmd);
+        end
+        
+        % else time did not pass
+      else
+        
+        % if application reset
+        if(appReset)
+          
+          % send IDLE command
+          this.sendMsgCmd(Msg.Mode.IDLE);
+        end
+      end
+    end
+  end
+  
+  methods (Access = private, Static = true)
+    function mode = modeUp(mode)
+      switch(mode)
+        case Msg.Mode.OFF
+          mode = Msg.Mode.IDLE;
+        case Msg.Mode.IDLE
+          mode = Msg.Mode.RUN;
+        otherwise
+          % nop
+      end
+    end
+    
+    function mode = modeDown(mode)
+      switch(mode)
+        case Msg.Mode.RUN
+          mode = Msg.Mode.IDLE;
+        case Msg.Mode.IDLE
+          mode = Msg.Mode.OFF;
+        otherwise
+          % nop
+      end
+    end
+  end
+  
+  methods (Access = private)
+    function processInbox(this, inbox)
+      if(~isempty(inbox))
+        [type, id, pb] = Msg.Proto.unpack(inbox);
+        if(strcmp(type, 'msg.Ack'))
+          msgMode = pbGetMsgMode(pb);
+          n = find(strcmp(id, this.cmdAppID), 1, 'first'); % depends on guarantee of unique identifiers
+          if(isempty(n))
+            this.log('Received Ack with unrecognized application identifier ''%s''', id);
+          else
+            this.appAck(n) = msgMode;
+            this.gotAck(n) = true;
+          end
+        end
+      end
+    end
+    
+    function sendMsgCmd(this, msgMode)
+      % send command
+      pbMsgCmd = msg.CmdBuilder();
+      pbSetMsgMode(pbMsgCmd, msgMode);
+      for n = 1:numel(this.cmdAppID)
+        outbox = Msg.Proto.pack('msg.Cmd', this.cmdAppID{n}, pbMsgCmd);
+        this.send(outbox);
+        this.gotAck(n) = false;
+      end
+      this.appCmd = msgMode;
+      this.tSend = this.tick();
+    end
+  end
+end

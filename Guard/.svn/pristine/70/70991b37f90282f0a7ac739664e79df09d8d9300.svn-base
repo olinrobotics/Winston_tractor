@@ -1,0 +1,43 @@
+% An application that produces waypoints for a vehicle to follow.
+classdef OCPlanner < Msg.App & Msg.Log
+  properties (GetAccess = private, SetAccess = private)
+    ownID
+  end
+  
+  methods (Access = public)
+    function this = OCPlanner()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), inf, cfg.slowTick);
+      this = this@Msg.Log();
+      this.ownID = cfg.ownID;
+    end
+
+    function sub = topics(this) %#ok unused input
+      sub = cell(0, 1); % do not subscribe
+    end
+    
+    function process(this, inbox) %#ok unused input
+      pb = nav.WaystatesBuilder();
+      addState(pb, 0.0, 0.0, OCTractorSimOwn.latR0, OCTractorSimOwn.lonR0, 0.0, 0.0);
+      addState(pb, 100.0, 0.0, OCTractorSimTarget.latR0, OCTractorSimTarget.lonR0, 0.0, 0.0);
+      this.send(Msg.Proto.pack('nav.Waystates', this.ownID, pb));
+      this.log(pbToText(pb));
+    end
+  end
+end
+
+function addState(pb, timeS, yawR, latR, lonR, wRPS, vMPS)
+pb.addTimeS(timeS);
+pb.addYawR(yawR);
+pb.addPitchR(0.0);
+pb.addRollR(0.0);
+pb.addLatR(latR);
+pb.addLonR(lonR);
+pb.addAltM(0.0);
+pb.addYawRateRPS(wRPS);
+pb.addPitchRateRPS(0.0);
+pb.addRollRateRPS(0.0);
+pb.addForwardRateMPS(vMPS);
+pb.addRightRateMPS(0.0);
+pb.addDownRateMPS(0.0);
+end

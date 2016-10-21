@@ -1,0 +1,18 @@
+CC = g++
+INCLUDES = -I..
+CFLAGS = -Wall -ansi -pedantic
+LIBS  = -lzmq -lprotobuf -lncursesw
+LFLAGS = -L/usr/local/lib
+SOURCES = $(wildcard ARD*.cpp)
+PROGRAMS = $(patsubst %.cpp,%,$(SOURCES))
+
+all: $(PROGRAMS)
+
+.PHONY: $(SOURCES)
+
+%: %.cpp
+	rm -f $@
+	$(CC) -o $@ $< $(INCLUDES) $(CFLAGS) $(LFLAGS) $(LIBS) 
+
+clean:
+	rm -f $(PROGRAMS)

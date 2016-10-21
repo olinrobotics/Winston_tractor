@@ -1,0 +1,25 @@
+function pbSetBehavior(pb, behavior)
+persistent LOITER APPROACH CAPTURE RELEASE DEPART
+if(isempty(LOITER))
+  LOITER = javaMethod('valueOf', 'nav$Behavior', 'LOITER');
+  APPROACH = javaMethod('valueOf', 'nav$Behavior', 'APPROACH');
+  CAPTURE = javaMethod('valueOf', 'nav$Behavior', 'CAPTURE');
+  RELEASE = javaMethod('valueOf', 'nav$Behavior', 'RELEASE');
+  DEPART = javaMethod('valueOf', 'nav$Behavior', 'DEPART');
+end
+if(~isa(behavior, 'nav$Behavior'))
+  switch(behavior)
+    case Behavior.APPROACH
+      behavior = APPROACH;
+    case Behavior.CAPTURE
+      behavior = CAPTURE;
+    case Behavior.RELEASE
+      behavior = RELEASE;
+    case Behavior.DEPART
+      behavior = DEPART;
+    otherwise
+      behavior = LOITER;
+  end
+end
+pb.setBehavior(behavior);
+end

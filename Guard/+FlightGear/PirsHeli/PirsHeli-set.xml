@@ -1,0 +1,9 @@
+<?xml version = '1.0' encoding = 'UTF-8' ?>
+<PropertyList>
+    <sim>
+        <model>
+            <path>Aircraft/PirsHeli/Models/PirsHeli.xml</path>
+        </model>
+    </sim>
+</PropertyList>
+

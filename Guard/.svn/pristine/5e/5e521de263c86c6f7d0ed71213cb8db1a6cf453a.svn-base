@@ -1,0 +1,49 @@
+% Plots the position of an ownship and a target vehicle.
+classdef ARDPlotter < Msg.App
+  properties (GetAccess = private, SetAccess = private)
+    hFig
+    hAxes
+    ownID
+    targetID
+  end
+  
+  methods (Access = public)
+    function this = ARDPlotter()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick);
+      this.ownID = cfg.ownID;
+      this.targetID = cfg.targetID;
+      this.hFig = figure;
+      this.hAxes = axes('Parent', this.hFig);
+      hold(this.hAxes, 'on');
+      axis(this.hAxes, 'equal');
+    end
+    
+    function delete(this)
+      close(this.hFig);
+    end
+
+    function sub = topics(this)
+      sub{1, 1} = Msg.Proto.topic('nav.FusedState', this.ownID);
+      sub{2, 1} = Msg.Proto.topic('nav.FusedState', this.targetID);
+    end
+    
+    function process(this, inbox)
+      if ~isempty(inbox)
+        [type, id, pb] = Msg.Proto.unpack(inbox);
+        if(strcmp(type, 'nav.FusedState'))
+          latR = pb.getLatR();
+          lonR = pb.getLonR();
+          altM = pb.getAltM();
+          [x, y, z] = earth.WGS84.llaToECEF(lonR, latR, altM);
+          switch(id)
+            case this.ownID
+              plot3(x, y, z, 'b.', 'MarkerSize', 8, 'Parent', this.hAxes);
+            case this.targetID
+              plot3(x, y, z, 'r.', 'MarkerSize', 8, 'Parent', this.hAxes);
+          end
+        end
+      end
+    end
+  end
+end

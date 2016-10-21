@@ -1,0 +1,75 @@
+% An application that simulates the ownship interface of a satellite.
+classdef ARDSatSimOwn < ARDSim
+  properties (GetAccess = public, Constant = true)
+    dynamicModelName = 'ARDSimpleModel';
+    xReal0 = [earth.WGS84.majorRadius+100000; 0; 0; 0; 0; 0; sqrt(2)/2; 0; -sqrt(2)/2; 0];
+    fovR = str2double(FlightGear.Config.hfov)*math.DEGTORAD;
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    ownID
+    startTime
+    isPolling
+    imgPeriod
+  end
+  
+  methods (Access = public)
+    function this = ARDSatSimOwn()
+      cfg = JSONRead('guard.json');
+      dynamicModel = ARDDynamics(ARDSatSimOwn.dynamicModelName);
+      this = this@ARDSim(cfg.ownID, 'Camera', '', dynamicModel, ARDSatSimOwn.xReal0);
+      this.ownID = cfg.ownID;
+      this.startTime = -inf;
+      this.isPolling = false;
+      this.imgPeriod = cfg.imgPeriod;
+    end
+    
+    function process(this, inbox)
+      process@ARDSim(this, inbox);
+      if(isempty(inbox)&&this.isReady())
+        % simulate navigation sensors
+        pbRPY = this.getRPY();
+        this.send(Msg.Proto.pack('nav.RPY', this.ownID, pbRPY));
+        
+        pbLatLon = this.getLatLon();
+        this.send(Msg.Proto.pack('nav.LatLon', this.ownID, pbLatLon));
+        
+        pbAlt = this.getAlt();
+        this.send(Msg.Proto.pack('nav.Alt', this.ownID, pbAlt));
+        
+        pbBodyRPYDelta = this.getBodyRPYDelta();
+        this.send(Msg.Proto.pack('nav.BodyRPYDelta', this.ownID, pbBodyRPYDelta));
+        
+        pbBodyFRDDelta = this.getBodyFRDDelta();
+        this.send(Msg.Proto.pack('nav.BodyFRDDelta', this.ownID, pbBodyFRDDelta));
+        
+        pbBodyFRDRateDelta = this.getBodyFRDRateDelta();
+        this.send(Msg.Proto.pack('nav.BodyFRDRateDelta', this.ownID, pbBodyFRDRateDelta));
+        
+        this.log('LatD=%+013.9f;LonD=%+014.9f;AltM=%09.2f', pbLatLon.getLatR()*math.RADTODEG,...
+          pbLatLon.getLonR()*math.RADTODEG, pbAlt.getAltM());
+        
+        % simulate camera
+        success = false;
+        if(this.isPolling)
+          [success, img] = this.pollImage();
+        else
+          time = this.getTime();
+          if((time-this.startTime)>this.imgPeriod)
+            [success, img] = this.pollImage();
+            this.startTime = time;
+            this.isPolling = true;
+          end
+        end
+        if(success)
+          pbImg = nav.ImgBuilder();
+          pbImg.setTimeS(this.startTime);
+          pbImg.setFovR(ARDSatSimOwn.fovR);
+          pbSetImg(pbImg, img);
+          this.send(Msg.Proto.pack('nav.Img', this.ownID, pbImg));
+          this.isPolling = false;
+        end
+      end
+    end
+  end
+end

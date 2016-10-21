@@ -1,0 +1,49 @@
+% An application that simulates the target interface of a satellite (which may or may not be controllable).
+classdef ARDSatSimTarget < ARDSim
+  properties (GetAccess = public, Constant = true)
+    dynamicModelName = 'ARDSimpleModel';
+    vehicleModelName = 'PirsBall';
+    xReal0 = [earth.WGS84.majorRadius+100000; 0; 54; 0; 0; 0; sqrt(2)/2; 0; -sqrt(2)/2; 0];
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    targetID
+  end
+    
+  methods (Access = public)
+    function this = ARDSatSimTarget()
+      cfg = JSONRead('guard.json');
+      dynamicModel = ARDDynamics(ARDSatSimTarget.dynamicModelName);
+      this = this@ARDSim(cfg.targetID, 'Target', ARDSatSimTarget.vehicleModelName, dynamicModel,...
+        ARDSatSimTarget.xReal0);
+      this.targetID = cfg.targetID;
+    end
+    
+    function process(this, inbox)
+      process@ARDSim(this, inbox);
+      if(isempty(inbox)&&this.isReady())
+        % simulate navigation sensors
+        pbRPY = this.getRPY();
+        this.send(Msg.Proto.pack('nav.RPY', this.targetID, pbRPY));
+        
+        pbLatLon = this.getLatLon();
+        this.send(Msg.Proto.pack('nav.LatLon', this.targetID, pbLatLon));
+        
+        pbAlt = this.getAlt();
+        this.send(Msg.Proto.pack('nav.Alt', this.targetID, pbAlt));
+        
+        pbBodyRPYDelta = this.getBodyRPYDelta();
+        this.send(Msg.Proto.pack('nav.BodyRPYDelta', this.targetID, pbBodyRPYDelta));
+        
+        pbBodyFRDDelta = this.getBodyFRDDelta();
+        this.send(Msg.Proto.pack('nav.BodyFRDDelta', this.targetID, pbBodyFRDDelta));
+        
+        pbBodyFRDRateDelta = this.getBodyFRDRateDelta();
+        this.send(Msg.Proto.pack('nav.BodyFRDRateDelta', this.targetID, pbBodyFRDRateDelta));
+        
+        this.log('LatD=%+013.9f;LonD=%+014.9f;AltM=%09.2f', pbLatLon.getLatR()*math.RADTODEG,...
+          pbLatLon.getLonR()*math.RADTODEG, pbAlt.getAltM());
+      end
+    end
+  end
+end

@@ -1,0 +1,182 @@
+% Optionally inherited state machine that processes commands and manages application states.
+classdef Cmd < handle  
+  methods (Access = public)
+    function sub = msgTopicsCmd(this)
+      sub{1} = this.cacheMsgCmdTopic();
+    end
+    
+    function msgProcessCmd(this, inbox)
+      % Handles application status and command levels.
+      
+      % if input is a command for this application
+      if(Msg.Proto.isTopic(inbox, this.cacheMsgCmdTopic()))
+        
+        % unpack the command
+        [~, id, pb] = Msg.Proto.unpack(inbox);
+        
+        % if the application ID matches this application
+        if(strcmp(id, this.msgApp.msgAppID))
+          
+          % unpack the command
+          mode = pbGetMsgMode(pb);
+          
+          % set command
+          this.setMsgCmd(mode);
+        end
+        
+        % else input is not a command (may be empty)
+      else
+        
+        % robustly run the appropriate function
+        try
+          switch(this.msgStatus)
+            case Msg.Cmd.INIT
+              done = this.init();
+              if(done)
+                this.msgStatus = Msg.Cmd.IDLE;
+              end
+            case Msg.Cmd.IDLE
+              this.idle(inbox);
+            case Msg.Cmd.RUN
+              done = this.run(inbox);
+              if(done)
+                this.msgStatus = Msg.Cmd.IDLE;
+              end
+            otherwise
+              % nop
+          end
+        catch err
+          this.msgStatus = Msg.Cmd.ERR;
+          rethrow(err);
+        end
+      end
+      
+      % if enough time has passed
+      if((hidi.getCurrentTime()-this.msgAckTimer)>=(this.msgAckPeriod/this.msgTimeWarp))
+        
+        % reset the timer
+        this.msgAckTimer = hidi.getCurrentTime();
+        
+        % convert status to mode
+        switch(this.msgStatus)
+          case Msg.Cmd.IDLE
+            mode = Msg.Mode.IDLE;
+          case Msg.Cmd.RUN
+            mode = Msg.Mode.RUN;
+          otherwise % {OFF, INIT, ERR, TERM}
+            mode = Msg.Mode.OFF;
+        end
+        
+        % send acknowledgement
+        pbMsgAck = msg.AckBuilder();
+        pbSetMsgMode(pbMsgAck, mode);
+        this.msgApp.send(Msg.Proto.pack('msg.Ack', this.msgApp.msgAppID, pbMsgAck));
+      end
+    end
+    
+    function done = init(this) %#ok unused input
+      % Default application initialization method (derived class should override).
+      %
+      % @param[out] done indicates request to transition to idle state
+      done = true;
+    end
+    
+    function idle(this, inbox) %#ok unused input
+      % Default process for handling messages while in IDLE status (derived class should override).
+      %
+      % @param[in] inbox input message (may be empty)
+    end
+    
+    function done = run(this, inbox) %#ok unused input
+      % Default process for handling messages while in RUN status (derived class should override).
+      %
+      % @param[in]  inbox input message (may be empty)
+      % @param[out] done  indicates request to transition to idle state
+      done = false;
+    end
+    
+    function term(this) %#ok unused input
+      % Default terminate method (derived class should override).
+    end
+  end
+    
+  methods (Access = protected)
+    % Constructor (derived class must initialize).
+    %
+    % @param[in] msgAckPeriod minimum time between command acknowledgements
+    % @param[in] msgTimeWarp  time scaling parameter
+    function this = Cmd(msgAckPeriod, msgTimeWarp)
+      this.msgApp = this;
+      if(isempty(this.msgApp.msgAppID))
+        error('Cmd: App must be initialized before Cmd');
+      end
+      this.msgAckPeriod = msgAckPeriod;
+      this.msgTimeWarp = msgTimeWarp;
+      this.msgStatus = Msg.Cmd.OFF;
+      this.msgAckTimer = hidi.getCurrentTime();
+      this.msgCmdTopic = '';
+      this.msgApp.msgCmd = this;
+    end
+  end
+  
+  properties (GetAccess = private, Constant = true)
+    OFF = 0;
+    IDLE = 1;
+    RUN = 2;
+    INIT = 3;
+    ERR = 4;
+    TERM = 5;
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    msgApp;
+    msgAckPeriod;
+    msgTimeWarp;
+    msgStatus;
+    msgAckTimer;
+    msgCmdTopic;
+  end
+  
+  methods (Access = private)
+    function topic = cacheMsgCmdTopic(this)
+      if(isempty(this.msgCmdTopic))
+        this.msgCmdTopic = Msg.Proto.topic('msg.Cmd', this.msgApp.msgAppID);
+      end
+      topic = this.msgCmdTopic;
+    end
+
+    function setMsgCmd(this, msgMode)
+      % Process a command request and set time.
+      %
+      % @param[in] mode requested command
+      switch(this.msgStatus)
+        case Msg.Cmd.INIT
+          if(Msg.Mode.OFF==msgMode)
+            this.msgStatus = Msg.Cmd.TERM;
+            this.setMsgCmd(msgMode);
+          end
+        case {Msg.Cmd.IDLE, Msg.Cmd.RUN}
+          switch(msgMode)
+            case Msg.Mode.RUN
+              this.msgStatus = Msg.Cmd.RUN;
+            case Msg.Mode.IDLE
+              this.msgStatus = Msg.Cmd.IDLE;
+            otherwise % Msg.Mode.OFF
+              this.msgStatus = Msg.Cmd.ERR;
+              this.setMsgCmd(msgMode);
+          end
+        case Msg.Cmd.ERR
+          this.msgStatus = Msg.Cmd.TERM;
+          this.setMsgCmd(msgMode);
+        case Msg.Cmd.TERM
+          this.term();
+          this.msgStatus = Msg.Cmd.OFF;
+        otherwise % Msg.Cmd.OFF
+          if(Msg.Mode.IDLE==msgMode)
+            this.msgStatus = Msg.Cmd.INIT;
+            this.setMsgCmd(msgMode);
+          end
+      end
+    end
+  end
+end

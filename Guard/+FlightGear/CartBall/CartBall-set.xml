@@ -1,0 +1,8 @@
+<?xml version = '1.0' encoding = 'UTF-8' ?>
+<PropertyList>
+    <sim>
+        <model>
+            <path>Aircraft/CartBall/Models/CartBall.xml</path>
+        </model>
+    </sim>
+</PropertyList>

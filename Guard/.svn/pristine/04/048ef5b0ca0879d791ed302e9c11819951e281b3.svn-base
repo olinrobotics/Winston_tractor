@@ -1,0 +1,134 @@
+% Plots the position of an ownship and a target vehicle.
+classdef ARDPlotter < Msg.App
+  properties (GetAccess = private, SetAccess = private)
+    hFig
+    hAxes
+    hWay
+    hOwn
+    hTarget
+    ownID
+    targetID
+    pbOwn
+    pbTarget
+    pbWay
+    rLatM
+    rLonM
+    xLim
+    yLim
+  end
+  
+  methods (Access = public)
+    function this = ARDPlotter()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick, cfg.slowTick, cfg.maxLength);
+      this.ownID = cfg.ownID;
+      this.targetID = cfg.targetID;
+      this.hFig = figure;
+      this.hAxes = axes('Parent', this.hFig);
+      this.hWay = [];
+      this.hOwn = [];
+      this.hTarget = [];
+      this.pbOwn = [];
+      this.pbTarget = [];
+      this.pbWay = [];
+      latR = 42.3656*math.DEGTORAD;
+      this.rLatM = earth.WGS84.radiusOfCurvature(latR);
+      this.rLonM = cos(earth.WGS84.geodeticToGeocentric(latR))*earth.WGS84.geodeticRadius(latR);
+      this.xLim = [];
+      this.yLim = [];
+      hold(this.hAxes, 'on');
+    end
+    
+    function delete(this)
+      close(this.hFig);
+    end
+    
+    function sub = topics(this)
+      sub{1, 1} = Msg.Proto.topic('nav.FusedState', this.ownID);
+      sub{2, 1} = Msg.Proto.topic('nav.FusedState', this.targetID);
+      sub{3, 1} = Msg.Proto.topic('nav.Waystates', this.ownID);
+    end
+    
+    function process(this, inbox)
+      if(isempty(inbox))
+        if(ishandle(this.hFig))
+          
+          if(~isempty(this.pbOwn))
+            this.hOwn = this.plotVehicle(this.hOwn, this.pbOwn, 'co');
+          end
+          if(~isempty(this.pbTarget))
+            this.hTarget = this.plotVehicle(this.hTarget, this.pbTarget, 'mo');
+          end
+          if(~isempty(this.pbWay))
+            this.hWay = this.plotWay(this.hWay, this.pbWay, 'k-');
+          end
+          
+          if(~isempty(this.xLim))
+            xlim(this.xLim);
+            ylim(this.yLim);
+            axis(this.hAxes, 'equal');
+            box(this.hAxes, 'on');
+            grid(this.hAxes, 'on');
+            set(this.hAxes, 'XTickLabel', []);
+            set(this.hAxes, 'YTickLabel', []);
+            set(this.hAxes, 'xTick', floor(this.xLim(1)):ceil(this.xLim(2)));
+            set(this.hAxes, 'YTick', floor(this.yLim(1)):ceil(this.yLim(2)));
+            drawnow;
+          end
+        end
+      else
+        [type, id, pb] = Msg.Proto.unpack(inbox);
+        switch(type)
+          case 'nav.FusedState'
+            switch(id)
+              case this.ownID
+                this.pbOwn = pb;
+              case this.targetID
+                this.pbTarget = pb;
+            end
+          case 'nav.Waystates'
+            this.pbWay = pb;
+        end
+      end
+    end
+    
+    function h = plotVehicle(this, h, pb, marker)
+      latR = pb.getLatR();
+      lonR = pb.getLonR();
+      eastM = lonR*this.rLonM;
+      northM = latR*this.rLatM;
+      if(isempty(this.xLim))
+        this.xLim = [eastM-1, eastM+1];
+        this.yLim = [northM-1, northM+1];
+      end
+      this.xLim = [min(this.xLim(1), eastM-1), max(this.xLim(2), eastM+1)];
+      this.yLim = [min(this.yLim(1), northM-1), max(this.yLim(2), northM+1)];
+      if(ishandle(h))
+        delete(h);
+      end
+      h = plot(eastM, northM, marker, 'MarkerSize', 9, 'Parent', this.hAxes);
+    end
+    
+    function h = plotWay(this, h, pb, marker)
+      N = pb.getRollRCount();
+      latR = zeros(N, 1);
+      lonR = zeros(N, 1);
+      for n = 1:N
+        latR(n) = pb.getLatR(n-1); % 0-based indexing
+        lonR(n) = pb.getLonR(n-1); % 0-based indexing
+      end
+      northM = latR*this.rLatM;
+      eastM = lonR*this.rLonM;
+      if(isempty(this.xLim))
+        this.xLim = [eastM(1)-1, eastM(1)+1];
+        this.yLim = [northM(1)-1, northM(1)+1];
+      end
+      this.xLim = [min(this.xLim(1), min(eastM)-1), max(this.xLim(2), max(eastM)+1)];
+      this.yLim = [min(this.yLim(1), min(northM)-1), max(this.yLim(2), max(northM)+1)];
+      if(ishandle(h))
+        delete(h);
+      end
+      h = plot(eastM', northM', marker, 'Parent', this.hAxes);
+    end
+  end
+end

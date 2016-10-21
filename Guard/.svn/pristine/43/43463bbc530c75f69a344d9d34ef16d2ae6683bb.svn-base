@@ -1,0 +1,135 @@
+#include <cstring>
+#include "+Msg/App.h"
+#include "+Msg/Exec.h"
+#include "+Msg/Proto.h"
+#include "JSONRead.h"
+
+// protocol
+#include "nav/nav.pb.cc"
+
+// configuration
+static JSONRead cfg("guard.json");
+
+// Listens to LabViewOut, translates types, adds time stamps, and sends them.
+class OCNavSensor : virtual public Msg::App, virtual public Msg::Time
+{
+public:
+  OCNavSensor(void) :
+    Msg::App("OCNavSensor", cfg.get<double>("ctrlTick"), INF),
+    Msg::Time(this, cfg.get<std::string>("timeSourceID"), cfg.get<double>("timeWarp"))
+  {
+    this->ownID = cfg.get<std::string>("ownID");
+    this->lvoTopic = Msg::Proto::topic("nav.LabViewOut", this->ownID);
+    this->dt = cfg.get<double>("ctrlTick");
+  }
+
+  void topics(std::vector< std::string >& sub)
+  {
+    sub.clear();
+    sub.push_back(this->lvoTopic);
+    return;
+  }
+  
+  void process(const std::string& inbox)
+  {
+    if(Msg::Proto::isTopic(inbox, this->lvoTopic))
+    {
+      if(this->isTimeSet())
+      {
+        processLVO(inbox);
+      }
+    }
+    return;
+  }
+  
+private:
+  std::string ownID; 
+  std::string lvoTopic;
+  double dt;
+  
+  void processLVO(const std::string& inbox)
+  {
+    std::string type;
+    std::string id;
+    std::string data;
+    nav::LabViewOut pb;
+    nav::RPY rpy;
+    nav::LatLon latLon;
+    nav::Alt alt;
+    nav::BodyRPYDelta rpyDelta;
+    nav::BodyFRDDelta frdDelta;
+    double time;        
+    union
+    {
+      struct Y
+      {
+        double yawR; // radians
+        double latR; // radians
+        double lonR; // radians
+        double yawRateRPS; // radians per second
+        double forwardRateMPS; // meters per second
+        double yawSigmaR; // radians
+        double latSigmaR; // radians
+        double lonSigmaR; // radians
+      } y;
+      unsigned char raw[64];
+    };
+    
+    time = this->getTime();
+    
+    Msg::Proto::unpack(inbox, type, id, data);
+    
+    pb.ParseFromString(data);
+    memcpy(raw, pb.data().data(), pb.data().size());
+    
+    rpy.set_times(time);
+    rpy.set_rollr(0.0);
+    rpy.set_pitchr(0.0);
+    rpy.set_yawr(y.yawR);
+    rpy.set_yawsigmar(y.yawSigmaR);
+    this->send(Msg::Proto::pack("nav.RPY", this->ownID, rpy.SerializeAsString()));
+    
+    // TODO: use C++ version of the following to get conversion factors from meters to radians
+    // rLatM = earth.WGS84.radiusOfCurvature(latR);
+    // rLonM = cos(earth.WGS84.geodeticToGeocentric(latR))*earth.WGS84.geodeticRadius(latR);
+    
+    latLon.set_times(time);
+    latLon.set_latr(y.latR);
+    latLon.set_lonr(y.lonR);
+    latLon.set_latsigmar(y.latSigmaR);
+    latLon.set_lonsigmar(y.lonSigmaR);
+    this->send(Msg::Proto::pack("nav.LatLon", this->ownID, latLon.SerializeAsString()));
+    
+    alt.set_times(time);
+    alt.set_altm(0.0);
+    this->send(Msg::Proto::pack("nav.Alt", this->ownID, alt.SerializeAsString()));
+    
+    rpyDelta.set_times(time);
+    rpyDelta.set_timedeltas(this->dt);
+    rpyDelta.set_rolldeltar(0.0);
+    rpyDelta.set_pitchdeltar(0.0);
+    rpyDelta.set_yawdeltar(y.yawRateRPS*this->dt);
+    this->send(Msg::Proto::pack("nav.BodyRPYDelta", this->ownID, rpyDelta.SerializeAsString()));
+    
+    frdDelta.set_times(time);
+    frdDelta.set_timedeltas(this->dt);
+    frdDelta.set_forwarddeltam(y.forwardRateMPS*this->dt);
+    frdDelta.set_rightdeltam(0.0);
+    frdDelta.set_downdeltam(0.0);
+    this->send(Msg::Proto::pack("nav.BodyFRDDelta", this->ownID, frdDelta.SerializeAsString()));
+    return;
+  }
+};
+
+int main(int argc, char* argv[])
+{
+  if(argc<3)
+  {
+    printf("usage: OC/OCNavSensor subURI pubURI\n");
+    return EXIT_FAILURE;
+  }
+  OCNavSensor app;
+  Msg::Exec* msgExec = Msg::Exec::getInstance(cfg.get<double>("timeWarp"));
+  msgExec->start(&app, argv[1], argv[2]);
+  return EXIT_FAILURE;
+}

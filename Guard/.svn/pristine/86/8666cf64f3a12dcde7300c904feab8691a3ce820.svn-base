@@ -1,0 +1,159 @@
+classdef ARDVision < Msg.App & Msg.Log 
+  properties (GetAccess = private, SetAccess = private)
+    cfg
+    visionAlgorithm
+    fiducialScaleM
+    imgTopic
+    stateTopic
+    ownID
+    targetID
+    relState
+  end
+  
+  methods (Access = public, Static = true)
+    function [direction, range, imgRed] = runRedBall(img, fovR, ballDiameter)
+      if(nargin==0)
+        close('all');
+        img = imread('peppers.png');
+        fovR = 45.0*math.DEGTORAD;
+        ballDiameter = 1.0;
+      end
+      steps = size(img, 1);
+      strides = size(img, 2);
+      layers = size(img, 3);
+      assert(layers==3);
+      focal = cot(fovR/2.0)*strides/2.0;
+      r = double(img(:, :, 1))/255.0;
+      g = double(img(:, :, 2))/255.0;
+      b = double(img(:, :, 3))/255.0;
+      alpha = r-0.5*g-0.5*b;
+      beta = sqrt(0.75)*(g-b);
+      h = atan2(beta, alpha);
+      score = max(alpha, 0.0).*exp(-h.*h/0.09);
+      imgRed = score>0.18;
+      %[centers, radii, metric] = imfindcircles(p, [20 25]); % alternate method
+      cc = bwconncomp(imgRed);
+      if(cc.NumObjects>0)
+        % compute image centroid and several perimeter points
+        numPixels = cellfun(@numel, cc.PixelIdxList);
+        [area, index] = max(numPixels);
+        [m, n] = ind2sub([steps, strides], cc.PixelIdxList{index});
+        mc = mean(m);
+        nc = mean(n);
+        imageRadius = sqrt(area/pi);
+        mBox = mc+[0.0; -imageRadius; imageRadius; 0.0; 0.0];
+        nBox = nc+[0.0; 0.0; 0.0; -imageRadius; imageRadius];
+        % compute the direction and mean subtended angle
+        [fBox, rBox, dBox] = ARDVision.inverseProjection(strides, steps, focal, nBox, mBox);
+        direction = [fBox(1); rBox(1); dBox(1)]; % approximate
+        g = zeros(4, 1);
+        for gi = 1:numel(g)
+          g(gi) = acos(dot([fBox(gi+1); rBox(gi+1); dBox(gi+1)], direction)); % angle from box center to edge
+        end
+        gamma = mean(g);
+        % compute the range
+        range = (ballDiameter/2.0)*csc(gamma);
+      else
+        direction = [];
+        range = [];
+      end
+    end
+    
+    function [forward, right, down] = inverseProjection(numStrides, numSteps, focal, stride, step)
+      assert(isa(stride, 'double'));
+      assert(isa(step, 'double'));
+      right = (stride-0.5*double(numStrides-1))/focal;
+      down = (step-0.5*double(numSteps-1))/focal;
+      den = sqrt(1.0+right.*right+down.*down);
+      forward = ones(size(den))./den;
+      right = right./den;
+      down = down./den;
+    end
+  end
+  
+  methods (Access = public)
+    function this = ARDVision()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick);
+      this = this@Msg.Log();
+      this.cfg = cfg;
+      this.visionAlgorithm = cfg.visionAlgorithm;
+      this.fiducialScaleM = cfg.fiducialScaleM;
+      this.imgTopic = Msg.Proto.topic('nav.Img', cfg.ownID);
+      this.stateTopic = Msg.Proto.topic('nav.RelFusedState', cfg.ownID);
+      this.ownID = cfg.ownID;
+      this.targetID = cfg.targetID;
+      this.relState = [];
+    end
+
+    function sub = topics(this)
+      sub{1, 1} = this.stateTopic;
+      sub{2, 1} = this.imgTopic;
+    end
+    
+    function process(this, inbox)
+      % if input is a relative state
+      if(Msg.Proto.isTopic(inbox, this.stateTopic))
+        [~, ~, this.relState] = Msg.Proto.unpack(inbox);
+        
+      % if input is an image
+      elseif(Msg.Proto.isTopic(inbox, this.imgTopic))
+        [~, ~, pb] = Msg.Proto.unpack(inbox);
+ 
+        if(~isempty(this.relState))
+
+          % TODO: check relative state to determine whether image processing should be activated
+          time = pb.getTimeS();
+          if(abs(time-this.relState.getTimeS())<(2.0*this.cfg.imgPeriod))
+            img = pbGetImg(pb);
+            fovR = pb.getFovR();
+            switch(this.visionAlgorithm)
+              case 'ContourHomography'
+                ch = runContourHomography(img, fovR*math.RADTODEG);
+                for k = 1:numel(ch.samples.hypothesis)
+                  valid = ch.samples.hypothesis{k}.valid;
+                  if(mean(valid)>0.5)
+                    H = ch.samples.hypothesis{k}.H;
+                    H1 = H*[1; 0; 0];
+                    H2 = H*[0; 1; 0];
+                    H3 = H*[0; 0; 1];
+                    R = [H1, H2, cross(H1, H2)];
+                    T = H3;
+                    Y = math.Rotation.matrixToEuler(R);
+                    
+                    pbRelRPY = nav.RelRPYBuilder();
+                    pbRelRPY.setTimeS(time);
+                    pbRelRPY.setTargetID(this.targetID);
+                    pbRelRPY.setRollR(Y(1));
+                    pbRelRPY.setPitchR(Y(2));
+                    pbRelRPY.setYawR(Y(3));
+                    this.send(Msg.Proto.pack('nav.RelRPY', this.ownID, pbRelRPY));
+                    
+                    pbRelFRD = nav.RelFRDBuilder();
+                    pbRelFRD.setTimeS(time);
+                    pbRelFRD.setTargetID(this.targetID);
+                    pbRelFRD.setForwardM(T(1));
+                    pbRelFRD.setRightM(T(2));
+                    pbRelFRD.setDownM(T(3));
+                    this.send(Msg.Proto.pack('nav.RelFRD', this.ownID, pbRelFRD));
+                  end
+                end
+              otherwise % RedBall
+                [direction, range] = ARDVision.runRedBall(img, fovR, this.fiducialScaleM);
+                T = direction*range;
+                if(~isempty(T))
+                  pbRelFRD = nav.RelFRDBuilder();
+                  pbRelFRD.setTimeS(time);
+                  pbRelFRD.setTargetID(this.targetID);
+                  pbRelFRD.setForwardM(T(1));
+                  pbRelFRD.setRightM(T(2));
+                  pbRelFRD.setDownM(T(3));
+                  this.send(Msg.Proto.pack('nav.RelFRD', this.ownID, pbRelFRD));
+                end
+            end
+          end
+        end
+      end
+    end
+  end
+end

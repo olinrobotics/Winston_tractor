@@ -1,0 +1,191 @@
+#ifndef MSGTRANSPORT_H
+#define MSGTRANSPORT_H
+
+#include <algorithm>
+#include <cstring>
+#include <string>
+#include "zmq.h"
+#include "+hidi/hidi.h"
+#include "+hidi/pause.h"
+
+namespace Msg
+{  
+  // Message transport middleware.
+  //
+  // @see dependencies in README.txt
+  class Transport
+  {
+  public:
+    static const int LINGER; // maximum number of milliseconds to hold delayed messages after socket is closed
+    static const uint64_t RCVHWM; // maximum number of delayed incoming messages to hold
+    static const uint64_t SNDHWM; // maximum number of delayed outgoing messages to hold
+    
+    std::string subURI;
+    std::string pubURI;
+    bool pubBind;
+    uint64_t maxLength;
+    void* context;
+    void* subSocket;
+    void* pubSocket;
+    char* buffer;
+    
+    // Construct transport layer object.
+    //
+    // @param[in] subURI    subscrbing endpoint address
+    // @param[in] pubURI    publishing endpoint address
+    // @param[in] maxLength (optional) maximum length of received message (will be truncated)
+    // @param[in] pubBind   (optional) bind to the publishing address
+    Transport(const std::string& subURI, const std::string& pubURI, uint64_t maxLength = 67108864,
+            bool pubBind = false)
+    {
+      int subConnect;
+      int pubConnect;
+      std::string message;
+      
+      this->subURI = subURI;
+      this->pubURI = pubURI;
+      this->pubBind = pubBind;
+      this->maxLength = (std::max)(maxLength, static_cast<uint64_t>(1)); // necessary for slow joiner message
+      
+      this->context = zmq_ctx_new();
+      if(this->context==NULL)
+      {
+        this->cleanup();
+        throw("Transport: Failed to create transport layer context.");
+      }
+      
+      this->pubSocket = zmq_socket(this->context, ZMQ_PUB);
+      if(this->pubSocket==NULL)
+      {
+        this->cleanup();
+        throw("Transport: Failed to open PUB socket.");
+      }
+      zmq_setsockopt(this->pubSocket, ZMQ_LINGER, &this->LINGER, sizeof(int));
+      zmq_setsockopt(this->pubSocket, ZMQ_SNDHWM, &this->SNDHWM, sizeof(uint64_t));
+      if(this->pubBind)
+      {
+        pubConnect = zmq_bind(this->pubSocket, this->pubURI.c_str());
+      }
+      else
+      {
+        pubConnect = zmq_connect(this->pubSocket, this->pubURI.c_str());
+      }
+      if(pubConnect!=0)
+      {
+        this->cleanup();
+        throw("Transport: Failed to connect to PUB socket.");
+      }
+      
+      this->subSocket = zmq_socket(this->context, ZMQ_SUB);
+      if(this->subSocket==NULL)
+      {
+        this->cleanup();
+        throw("Transport: Failed to open SUB socket.");
+      }
+      zmq_setsockopt(this->subSocket, ZMQ_LINGER, &this->LINGER, sizeof(int));
+      zmq_setsockopt(this->subSocket, ZMQ_RCVHWM, &this->RCVHWM, sizeof(uint64_t));
+      subConnect = zmq_connect(this->subSocket, this->subURI.c_str());
+      if(subConnect!=0)
+      {
+        this->cleanup();
+        throw("Transport: Failed to connect to SUB socket.");
+      }
+      
+      this->buffer = new char[this->maxLength];
+      
+      // solve slow joiner problem
+      this->subscribe({'\0'});
+      while(true)
+      {
+        this->send({'\0'});
+        hidi::pause(0.1);
+        this->receive(message);
+        if(message.size()>0)
+        {
+          this->unsubscribe({'\0'});
+          break;
+        }
+      }
+    }
+    
+    // Subscribe to messages that match header.
+    //
+    // @param[in] header initial bytes to match
+    void subscribe(const std::string& header)
+    {
+      zmq_setsockopt(this->subSocket, ZMQ_SUBSCRIBE, &header[0], header.size());
+      return;
+    }
+    
+    // Unsubscribe to messages that match header.
+    //
+    // @param[in] header initial bytes to match
+    void unsubscribe(const std::string& header)
+    {
+      zmq_setsockopt(this->subSocket, ZMQ_UNSUBSCRIBE, &header[0], header.size());
+      return;
+    }
+    
+    // Send message (non-blocking).
+    //
+    // @param[in] message byte array to send
+    void send(const std::string& message)
+    {
+      zmq_send(this->pubSocket, &message[0], message.size(), 0);
+      return;
+    }
+    
+    // Receive message (non-blocking).
+    //
+    // @param[out] message received byte array
+    //
+    // @note If a message is available, then it will be received in its entirety.
+    // @note If no message is available, then the output will be an empty string.
+    void receive(std::string& message)
+    {
+      int bytes;
+      bytes = zmq_recv(this->subSocket, buffer, this->maxLength, ZMQ_DONTWAIT);
+      bytes = (std::max)(bytes, 0); // handle receive error case
+      message.assign(buffer, buffer+static_cast<size_t>(bytes));
+      return;
+    }
+    
+    // Cleanup transport layer dependencies.
+    void cleanup(void)
+    {
+      if(this->buffer!=NULL)
+      {
+        delete[] buffer;
+      }
+      
+      if(this->subSocket!=NULL)
+      {
+        zmq_close(this->subSocket); // safer than disconnecting (possible matlab-zmq bug)
+        this->subSocket = NULL;
+      }
+      
+      if(this->pubSocket!=NULL)
+      {
+        zmq_close(this->pubSocket); // safer than disconnecting (possible matlab-zmq bug)
+        this->pubSocket = NULL;
+      }
+      
+      if(this->context!=NULL)
+      {
+        zmq_ctx_term(this->context);
+        this->context = NULL;
+      }
+      return;
+    }
+    
+    ~Transport(void)
+    {
+      this->cleanup();
+    }
+  };
+  const int Transport::LINGER = 0;
+  const uint64_t Transport::RCVHWM = 10000;
+  const uint64_t Transport::SNDHWM = 10000;
+}
+
+#endif

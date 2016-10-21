@@ -1,0 +1,10 @@
+% Enumerated behaviors.
+classdef Behavior < uint8
+  enumeration
+    LOITER(0)
+    APPROACH(1)
+    CAPTURE(2)
+    RELEASE(3)
+    DEPART(4)
+  end
+end

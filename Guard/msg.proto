@@ -1,0 +1,39 @@
+////////////////////////////////////////////
+// THIS FILE DEFINES MSG FRAMEWORK TYPES. //
+//            DO NOT MODIFY.              //
+////////////////////////////////////////////
+
+syntax = "proto2";
+package msg;
+option java_package = "";
+option java_outer_classname = "msg";
+
+message Null // empty message type
+{}
+
+message Log // text logging message type
+{
+  required string text = 1; // text content
+}
+
+message Time // time synchronization type
+{
+  required double timeS = 1; // time synchronization signal
+}
+
+enum Mode // run level type
+{
+  OFF = 0; // application is off, initializing, or terminating
+  IDLE = 1; // application is ready to act but currently dormant
+  RUN = 2; // application is active
+}
+
+message Cmd
+{
+  required Mode mode = 1;
+}
+
+message Ack
+{
+  required Mode mode = 1;
+}

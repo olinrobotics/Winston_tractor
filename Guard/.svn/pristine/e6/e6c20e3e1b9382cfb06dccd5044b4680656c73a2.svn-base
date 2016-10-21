@@ -1,0 +1,8 @@
+<?xml version = '1.0' encoding = 'UTF-8' ?>
+<PropertyList>
+    <sim>
+        <model>
+            <path>Aircraft/SenecaBall/Models/SenecaBall.xml</path>
+        </model>
+    </sim>
+</PropertyList>

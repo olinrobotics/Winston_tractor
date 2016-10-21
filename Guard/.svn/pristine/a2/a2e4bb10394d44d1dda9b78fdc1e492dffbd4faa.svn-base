@@ -1,0 +1,8 @@
+% Enumerated run-level command set.
+classdef Mode < uint8
+  properties (Constant = true)
+    OFF = uint8(0);
+    IDLE = uint8(1);
+    RUN = uint8(2);
+  end
+end

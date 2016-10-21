@@ -1,0 +1,10 @@
+% Enumerated behaviors.
+classdef Behavior < uint8
+  properties (Constant = true)
+    LOITER = uint8(0);
+    APPROACH = uint8(1);
+    CAPTURE = uint8(2);
+    RELEASE = uint8(3);
+    DEPART = uint8(4);
+  end
+end

@@ -1,0 +1,138 @@
+% Starts and stops the GUARD framework and associated messaging applications.
+% 
+%   usage: guard [cmd1] [cmd2] ... [cmdN]
+%
+%     cmd: command to execute
+function guard(varargin)
+persistent cfg msgExec
+
+if(isempty(cfg))
+  % initialize paths
+  local = fileparts(mfilename('fullpath'));
+  addpath(fullfile(local, 'ARD'));
+  addpath(fullfile(local, 'UW'));
+  addpath(fullfile(local, 'OC'));
+  Msg.Proto.addpath(local);
+  
+  % get config
+  cfg = JSONRead('guard.json');
+  msgExec = Msg.Exec.getInstance(cfg.timeWarp);
+end
+
+% default display help information
+if(nargin==0)
+  help(mfilename);
+end
+
+% execute the applications
+for arg = 1:nargin
+  switch(varargin{arg})
+    case 'start'
+      systemStart('+Msg/MsgSwitch', cfg.subURI, cfg.pubURI);
+      terminalStart('ARD/ARDWatcher', cfg.subURI, cfg.pubURI);
+    case 'stop'
+      msgExec.delete();
+      close('all');
+      evalin('base', 'close all');
+      clear('classes'); %#ok destruction sequence
+      evalin('base', 'clear classes');
+      clear('java'); %#ok destruction sequence
+      evalin('base', 'clear java');
+      systemStop('ARD');
+      systemStop('UW');
+      systemStop('OC');
+      systemStop('Msg');
+      break;
+    case 'Test'
+      msgExec.start(ARDTalker(), cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDListener(), cfg.subURI, cfg.pubURI);
+    case 'ARDClock'
+      systemStart('ARD/ARDClock', cfg.subURI, cfg.pubURI);
+    case 'TestMulti'
+      systemStart('+Msg/MsgSwitch', cfg.subURIOwn, cfg.pubURIOwn);
+      systemStart('+Msg/MsgBridge', cfg.subURIOwn, cfg.pubURI);
+      msgExec.start(ARDTalker(), cfg.subURI, cfg.pubURIOwn);
+      terminalStart('ARD/ARDListener', cfg.subURI, cfg.pubURI);
+    case 'ARDListener'
+      msgExec.start(ARDListener(), cfg.subURI, cfg.pubURI);
+    case 'ARDVideoRecorder'
+      msgExec.start(ARDVideoRecorder('TempVideo.avi'), cfg.subURI, cfg.pubURI);
+    case 'ARDSatSimTarget'
+      msgExec.start(ARDSatSimTarget(), cfg.subURI, cfg.pubURI);
+    case 'ARDPlotter'
+      msgExec.start(ARDPlotter(), cfg.subURI, cfg.pubURI);
+    case 'TestAutonomy'
+      systemStart('ARD/ARDClock', cfg.subURI, cfg.pubURI);
+      terminalStart('ARD/ARDListener', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDCommander({'ARDAutonomy', 'ARDCmdTest'}), cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDCmdTest(), cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDAutonomy', cfg.subURI, cfg.pubURI);
+    case 'TestCmd'
+      terminalStart('ARD/ARDListener', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDCommander({'ARDCmdTest'}), cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDCmdTest(), cfg.subURI, cfg.pubURI);
+    case 'TestCmdCPP'
+      terminalStart('ARD/ARDListener', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDCommander({'ARDCmdTest'}), cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDCmdTest', cfg.subURI, cfg.pubURI);
+    case 'TestFlyCap'
+      % ownship
+      systemStart('ARD/ARDClock', cfg.subURI, cfg.pubURI);
+      systemStart('OC/OCCamera', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDListener(), cfg.subURI, cfg.pubURI);
+    case 'TestTractorSim'
+      % command station
+      systemStart('ARD/ARDClock', cfg.subURI, cfg.pubURI);
+      terminalStart('ARD/ARDListener', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDCommander({'ARDController', 'ARDAutonomy', cfg.ownID, cfg.targetID}), cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDEstimator', cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDAutonomy', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDController(), cfg.subURI, cfg.pubURI);
+      % target
+      systemStart('+Msg/MsgSwitch', cfg.subURITarget, cfg.pubURITarget);
+      systemStart('+Msg/MsgBridge', cfg.subURITarget, cfg.pubURI);
+      msgExec.start(OCTractorSimTarget(), cfg.subURI, cfg.pubURITarget); % must be constructed before own   
+      % ownship
+      systemStart('+Msg/MsgSwitch', cfg.subURIOwn, cfg.pubURIOwn);
+      systemStart('+Msg/MsgBridge', cfg.subURIOwn, cfg.pubURI);
+      systemStart('ARD/ARDVisionHelper', cfg.subURI, cfg.pubURIOwn);
+      msgExec.start(OCTractorSimOwn(), cfg.subURI, cfg.pubURIOwn); % must be constructed after target
+      msgExec.start(ARDVision(), cfg.subURI, cfg.pubURIOwn); % TODO: package pose estimate with image then subscribe locally
+    case 'TestSatSim'
+      % command station
+      terminalStart('ARD/ARDListener', cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDClock', cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDCommander({'ARDController', 'ARDAutonomy', cfg.ownID, cfg.targetID}), cfg.subURI, cfg.pubURI);
+      msgExec.start(ARDController(), cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDEstimator', cfg.subURI, cfg.pubURI);
+      systemStart('ARD/ARDAutonomy', cfg.subURI, cfg.pubURI);
+      % target
+      systemStart('+Msg/MsgSwitch', cfg.subURITarget, cfg.pubURITarget);
+      systemStart('+Msg/MsgBridge', cfg.subURITarget, cfg.pubURI);
+      msgExec.start(ARDSatSimTarget(), cfg.subURI, cfg.pubURITarget); % must be constructed before own      
+      % ownship
+      systemStart('+Msg/MsgSwitch', cfg.subURIOwn, cfg.pubURIOwn);
+      systemStart('+Msg/MsgBridge', cfg.subURIOwn, cfg.pubURI);
+      systemStart('ARD/ARDVisionHelper', cfg.subURI, cfg.pubURIOwn);
+      msgExec.start(ARDSatSimOwn(), cfg.subURI, cfg.pubURIOwn); % must be constructed after target
+      msgExec.start(ARDVision(), cfg.subURI, cfg.pubURIOwn); % TODO: package pose estimate with image then subscribe locally
+    otherwise
+      % display help information
+      help(mfilename);
+  end
+end
+end
+
+function systemStart(appName, subURI, pubURI)
+local = fileparts(mfilename('fullpath'));
+system([fullfile(local, appName), ' "', subURI, '" "', pubURI, '" &']);
+end
+
+function terminalStart(appName, subURI, pubURI)
+system(['xterm -hold -e ', appName, ' "', subURI, '" "', pubURI, '" &']);
+end
+
+function systemStop(pattern)
+user = getenv('USER');
+system(['pkill -f -u ', user, ' "', pattern, '"']);
+end

@@ -1,0 +1,142 @@
+#include "+Msg/App.h"
+#include "+Msg/Cmd.h"
+#include "+Msg/Exec.h"
+#include "+Msg/Proto.h"
+#include "+Msg/Time.h"
+#include "JSONRead.h"
+
+// protocol
+#include "nav/nav.pb.cc"
+
+// configuration
+static JSONRead cfg("guard.json");
+
+class ARDAutonomy : virtual public Msg::App, virtual public Msg::Cmd, virtual public Msg::Log, virtual public Msg::Time
+{
+public:
+  ARDAutonomy() :
+    Msg::App("ARDAutonomy", cfg.get<double>("fastTick"), cfg.get<double>("slowTick")),
+    Msg::Cmd(this, cfg.get<double>("ackPeriod"), cfg.get<double>("timeWarp")), Msg::Log(this), 
+    Msg::Time(this, cfg.get<std::string>("timeSourceID"), cfg.get<double>("timeWarp"))
+  {
+    this->state = nav::DockingState::IDLE;
+    this->timer = this->tick();
+    this->ownInit = false;
+    this->targetInit = false;
+  }
+  
+  void topics(std::vector< std::string >& sub)
+  {
+    sub.push_back(Msg::Proto::topic("nav.FusedState", cfg.get<std::string>("ownID")));
+    sub.push_back(Msg::Proto::topic("nav.FusedState", cfg.get<std::string>("targetID")));
+    return;
+  }
+  
+  bool init(void)
+  {
+    this->sendState();
+    return this->isTimeSet();
+  }
+  
+  void idle(const std::string& inbox)
+  {
+    if(!inbox.empty())
+    {
+      this->processInbox(inbox);
+    }
+    else
+    {
+      this->state = nav::DockingState::IDLE;
+      this->sendState();
+    }
+    return;
+  }
+  
+  bool run(const std::string& inbox)
+  {
+    if(!inbox.empty())
+    {
+      this->processInbox(inbox);
+    }
+    else
+    { 
+      // TODO: insert correct docking logic that transitions based on vehicle states
+      switch(this->state)
+      {
+        case nav::DockingState::IDLE:
+        {
+          if(this->tock(this->timer)>10)
+          {
+            this->state = nav::DockingState::APPROACH;
+            this->timer = this->tick();
+          }
+        }
+        default:
+        {
+          // nop
+        }
+      }
+      this->sendState();
+    }
+    return false;
+  }
+  
+  void term(void)
+  {
+    return;
+  }
+  
+private:
+  uint64_t timer;
+  nav::DockingState::State state;
+  bool ownInit;
+  bool targetInit;
+  nav::FusedState own;
+  nav::FusedState target;
+  
+  void processInbox(const std::string& inbox)
+  {
+    std::string type;
+    std::string id;
+    std::string data;
+    Msg::Proto::unpack(inbox, type, id, data);
+    if(!type.compare("nav.FusedState"))
+    {
+      nav::FusedState fusedState;
+      fusedState.ParseFromString(data);
+      if(!id.compare(cfg.get<std::string>("ownID")))
+      {
+        this->own = fusedState;
+        this->ownInit = true;
+      }
+      else if(!id.compare(cfg.get<std::string>("targetID")))
+      {
+        this->target = fusedState;
+        this->targetInit = true;
+      }
+    }
+    return;
+  }
+  
+  void sendState(void)
+  {
+    nav::DockingState docking;
+    docking.set_state(this->state);
+    this->send(Msg::Proto::pack("nav.DockingState", "ARDAutonomy", docking.SerializeAsString()));
+    std::string temp(nav::DockingState::State_Name(state));
+    this->log("DockingState=%s", temp.c_str());
+  }
+};
+
+int main(int argc, char* argv[])
+{
+  if(argc<3)
+  {
+    printf("usage: ARDAutonomy subURI pubURI\n");
+    return EXIT_FAILURE;
+  }
+  ARDAutonomy app;
+  Msg::Exec* msgExec = Msg::Exec::getInstance(cfg.get<double>("timeWarp"));
+  msgExec->start(&app, argv[1], argv[2]);
+  return EXIT_FAILURE;
+}

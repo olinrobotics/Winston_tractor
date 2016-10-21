@@ -1,0 +1,23 @@
+PROTOC = $(shell which protoc)
+PWD = $(shell pwd)
+SOURCES = $(wildcard *.proto)
+PACKAGES = $(patsubst %.proto,%,$(SOURCES))
+MAKEFILES = $(shell find -mindepth 2 -name Makefile)
+SUBDIRS = $(patsubst %/Makefile,%,$(MAKEFILES))
+
+all: $(PACKAGES) $(SUBDIRS)
+
+.PHONY: all $(SOURCES) $(SUBDIRS)
+
+%: %.proto
+	rm -Rf "$(PWD)/$@"
+	mkdir "$(PWD)/$@"
+	$(PROTOC) -I"$(PWD)" --cpp_out="$(PWD)/$@" "$(PWD)/$<"
+
+$(SUBDIRS):
+	$(MAKE) -C $@
+
+clean:
+	@for dir in $(SUBDIRS); do $(MAKE) -C $$dir clean; done
+	rm -Rf $(PACKAGES)
+

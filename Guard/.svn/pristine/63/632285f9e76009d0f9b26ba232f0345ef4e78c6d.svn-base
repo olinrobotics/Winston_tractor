@@ -1,0 +1,47 @@
+#ifndef HIDIHIDI_H
+#define HIDIHIDI_H
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <cmath>
+#include <cstdint> // requires -std=c++11
+#include <cstdio>
+#include <limits>
+#include <string>
+#include <vector>
+
+#ifndef EPS
+#define EPS std::numeric_limits<double>::epsilon()
+#endif
+#ifndef INF
+#define INF std::numeric_limits<double>::infinity()
+#endif
+#ifndef NAN
+#define NAN sqrt(static_cast<double>(-1.0))
+#endif
+
+#if defined(__APPLE__) || defined(_WIN32)
+static bool isnan(const double& x)
+{
+  volatile double y = x;
+  return (y!=x);
+}
+#endif
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+class _SetOutputModeBinary
+{
+public:
+  _SetOutputModeBinary(void)
+  {
+    _setmode(1, _O_BINARY);
+  }
+};
+_SetOutputModeBinary _setOutputModeBinary;
+#endif
+
+#endif

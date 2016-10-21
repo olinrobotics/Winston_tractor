@@ -1,0 +1,226 @@
+% Plots the position of an ownship and a target vehicle.
+classdef ARDPlotter < Msg.App & Msg.Log
+  properties (Constant = true, GetAccess = public)
+    writeImages = false;
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    hFig
+    hAxes
+    hWay
+    hOwn
+    hTarget
+    ownID
+    targetID
+    pbOwn
+    pbTarget
+    pbWay
+    rLatM
+    rLonM
+    xLim
+    yLim
+    count
+  end
+  
+  methods (Access = public)
+    function this = ARDPlotter()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick, cfg.fastTick);
+      this = this@Msg.Log();
+      this.ownID = cfg.ownID;
+      this.targetID = cfg.targetID;
+      this.hFig = figure('Name', this.msgAppID);
+      this.hAxes = axes('Parent', this.hFig);
+      this.hWay = [];
+      this.hOwn = [];
+      this.hTarget = [];
+      this.pbOwn = [];
+      this.pbTarget = [];
+      this.pbWay = [];
+      latR = 42.3656*math.DEGTORAD;
+      this.rLatM = earth.WGS84.radiusOfCurvature(latR);
+      this.rLonM = cos(earth.WGS84.geodeticToGeocentric(latR))*earth.WGS84.geodeticRadius(latR);
+      this.xLim = [];
+      this.yLim = [];
+      this.count = 0;
+      
+      hold(this.hAxes, 'on');
+      set(this.hFig, 'Color', [1, 1, 1]);
+      set(this.hAxes, 'Position', [0, 0, 1, 1]);
+      box(this.hAxes, 'on');
+      grid(this.hAxes, 'on');
+      this.draw();
+    end
+    
+    function delete(this)
+      close(this.hFig);
+    end
+    
+    function sub = topics(this)
+      sub{1, 1} = Msg.Proto.topic('nav.FusedState', this.ownID);
+      sub{2, 1} = Msg.Proto.topic('nav.FusedState', this.targetID);
+      sub{3, 1} = Msg.Proto.topic('nav.Waystates', this.ownID);
+    end
+    
+    function process(this, inbox)
+      if(isempty(inbox))
+        this.draw();
+      else
+        [type, id, pb] = Msg.Proto.unpack(inbox);
+        switch(type)
+          case 'nav.FusedState'
+            switch(id)
+              case this.ownID
+                this.pbOwn = pb;
+              case this.targetID
+                this.pbTarget = pb;
+            end
+          case 'nav.Waystates'
+            this.pbWay = pb;
+        end
+      end
+    end
+    
+    function draw(this)
+      if(ishandle(this.hFig))
+        if(~isempty(this.pbOwn))
+          this.hOwn = this.plotVehicle(this.hOwn, this.pbOwn, [0.0, 0.0, 0.6]);
+        end
+        
+        if(~isempty(this.pbTarget))
+          this.hTarget = this.plotVehicle(this.hTarget, this.pbTarget, [0.6, 0.0, 0.0]);
+        end
+        
+        if(~isempty(this.pbWay))
+          this.hWay = this.plotWay(this.hWay, this.pbWay, [0.5, 0.5, 0.9]);
+        end
+        
+        axis(this.hAxes, 'equal');
+        if(~isempty(this.xLim))
+          if((abs(diff(this.xLim))<10000)&&(abs(diff(this.yLim))<10000))
+            xlim(this.hAxes, [floor(this.xLim(1))-1, ceil(this.xLim(2))+1]);
+            ylim(this.hAxes, [floor(this.yLim(1))-1, ceil(this.yLim(2))+1]);
+            set(this.hAxes, 'XTick', floor(this.xLim(1)):ceil(this.xLim(2)));
+            set(this.hAxes, 'YTick', floor(this.yLim(1)):ceil(this.yLim(2)));
+          else
+            error('ARDPlotter: Axis limit exceeds 10000 units.');
+          end
+        end
+        set(this.hAxes, 'XColor', [0.25, 0.25, 0.25]);
+        set(this.hAxes, 'YColor', [0.25, 0.25, 0.25]);
+        set(this.hAxes, 'XTickLabel', []);
+        set(this.hAxes, 'YTickLabel', []);
+        set(this.hAxes, 'TickLength', [0.0, 0.0]);
+        drawnow;
+        
+        if(this.writeImages)
+          this.count = this.count+1;
+          cdata = fBuffer(this.hFig);
+          imwrite(cdata, sprintf('ARDPlotter%05d.png', this.count));
+        end
+      end
+    end
+    
+    function h = plotMarker(this, yaw, east, north, speed, marker, markerSize, color)
+      K = numel(yaw);
+      h = zeros(K+1, 1);
+      for k = 1:K
+        nose = 0.3+0.3*speed(k);
+        h(k) = plot(east(k)+[0, nose*sin(yaw(k))], north(k)+[0, nose*cos(yaw(k))], '-', 'Color', color,...
+          'Parent', this.hAxes);
+      end
+      h(K+1) = plot(east, north, marker, 'MarkerFaceColor', 'none', 'MarkerEdgeColor', color,...
+        'MarkerSize', markerSize, 'Parent', this.hAxes);
+    end
+    
+    function h = plotVehicle(this, h, pb, color)
+      yawR = pb.getYawR();
+      latR = pb.getLatR();
+      lonR = pb.getLonR();
+      speedMPS = pb.getForwardDeltaM()/pb.getTimeDeltaS();
+      eastM = lonR*this.rLonM;
+      northM = latR*this.rLatM;
+      if(isempty(this.xLim))
+        this.xLim = [eastM, eastM];
+        this.yLim = [northM, northM];
+      end
+      this.xLim = [min(this.xLim(1), eastM), max(this.xLim(2), eastM)];
+      this.yLim = [min(this.yLim(1), northM), max(this.yLim(2), northM)];
+      
+      if(ishandle(h))
+        delete(h(:));
+      end
+      h = this.plotMarker(yawR, eastM, northM, speedMPS, '.', 10, color);
+    end
+    
+    function h = plotWay(this, h, pb, color)
+      N = pb.getTimeSCount();
+      yawR = zeros(N, 1);
+      latR = zeros(N, 1);
+      lonR = zeros(N, 1);
+      speedMPS = zeros(N, 1);
+      for n = 1:N
+        yawR(n) = pb.getYawR(n-1); % 0-based
+        latR(n) = pb.getLatR(n-1); % 0-based
+        lonR(n) = pb.getLonR(n-1); % 0-based
+        speedMPS(n) = pb.getForwardRateMPS(n-1); % 0-based
+      end
+      northM = latR*this.rLatM;
+      eastM = lonR*this.rLonM;
+      if(isempty(this.xLim))
+        this.xLim = [min(eastM), max(eastM)];
+        this.yLim = [min(northM), max(northM)];
+      end
+      this.xLim = [min(this.xLim(1), min(eastM)), max(this.xLim(2), max(eastM))];
+      this.yLim = [min(this.yLim(1), min(northM)), max(this.yLim(2), max(northM))];
+      
+      for k = 1:numel(h)
+        if(ishandle(h(k)))
+          delete(h(k));
+        end
+      end
+      h = this.plotMarker(yawR, eastM, northM, speedMPS, '.', 8, color);
+    end
+  end
+end
+
+% Captures a figure using hardcopy.
+%
+% @param[in]  hFigure figure handle
+% @param[out] cData   truecolor image data
+function cData = fBuffer(hFigure)
+units = get(hFigure, 'Units');
+set(hFigure, 'Units', 'pixels');
+position = get(hFigure, 'Position');
+
+paperPositionMode = get(hFigure, 'PaperPositionMode');
+set(hFigure, 'PaperPositionMode', 'Manual');
+
+paperUnits = get(hFigure, 'PaperUnits');
+set(hFigure, 'PaperUnits', 'inches');
+paperPosition = get(hFigure, 'PaperPosition');
+
+invertHardcopy = get(hFigure, 'InvertHardcopy');
+set(hFigure, 'InvertHardcopy', 'off');
+
+if(strcmpi(get(hFigure, 'Renderer'), 'opengl'))
+  driver = '-dopengl';
+else
+  driver = '-dzbuffer';
+end
+
+sPPI = get(0, 'ScreenPixelsPerInch');
+set(hFigure, 'PaperPosition', [0.0, 0.0, position(3), position(4)]/sPPI);
+cData = hardcopy(hFigure, driver, '-r0');
+
+if(numel(cData)>(position(3)*position(4)*3))
+  cData = cData(1:position(4), 1:position(3), :);
+end
+
+set(hFigure, 'InvertHardcopy', invertHardcopy);
+set(hFigure, 'PaperUnits', paperUnits);
+set(hFigure, 'PaperPosition', paperPosition);
+set(hFigure, 'PaperPositionMode', paperPositionMode);
+set(hFigure, 'Units', units);
+set(hFigure, 'Position', position);
+end

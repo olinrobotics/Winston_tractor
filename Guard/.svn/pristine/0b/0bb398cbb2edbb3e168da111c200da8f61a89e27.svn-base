@@ -1,0 +1,7 @@
+function terminalStart(appName, subURI, pubURI)
+if(ismac)
+  system(['open -a Terminal ', fullfile(pwd, appName), ' "', subURI, '" "', pubURI, '" &']);
+else
+  system(['xterm -hold -e ', appName, ' "', subURI, '" "', pubURI, '" &']);
+end
+end

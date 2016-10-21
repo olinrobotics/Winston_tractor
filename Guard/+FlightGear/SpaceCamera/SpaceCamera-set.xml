@@ -1,0 +1,14 @@
+<?xml version = '1.0' encoding = 'UTF-8' ?>
+<PropertyList>
+    <sim>
+        <model>
+            <path>Aircraft/SpaceCamera/Models/SpaceCamera.xml</path>
+        </model>
+    </sim>
+    <nasal>
+        <Camera>
+            <file>Aircraft/SpaceCamera/SpaceCamera.nas</file>
+        </Camera>
+    </nasal>
+</PropertyList>
+

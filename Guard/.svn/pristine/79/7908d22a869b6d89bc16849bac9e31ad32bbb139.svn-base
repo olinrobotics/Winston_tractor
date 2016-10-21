@@ -1,0 +1,86 @@
+#ifndef MSGCMD_H
+#define MSGCMD_H
+
+#include <string>
+#include "+hidi/getCurrentTime.h"
+#include "+Msg/Proto.h"
+
+namespace Msg
+{
+  class App;
+  
+  /**
+   * Optionally inherited state machine that processes commands and manages application states.
+   */
+  class Cmd
+  {
+  public:
+    /**
+     * Constructor (derived class must initialize).
+     *
+     * @param[in] msgAckPeriod minimum time between command acknowledgements
+     * @param[in] msgTimeWarp  time scaling parameter
+     */
+    Cmd(App* msgApp, const double& msgAckPeriod, const double& msgTimeWarp);
+    
+    /**
+     * Default application initialization method (derived class should override).
+     *
+     * @param[out] done indicates request to transition to idle state
+     */
+    virtual bool init(void);
+    
+    /**
+     * Default process for handling messages while in IDLE status (derived class should override).
+     *
+     * @param[in]  inbox input message (may be empty)
+     */
+    virtual void idle(const std::string& inbox);
+    
+    /** Default process for handling messages while in RUN status (derived class should override).
+     *
+     * @param[in]  inbox input message (may be empty)
+     * @param[out] done  indicates request to transition to idle state
+     */
+    virtual bool run(const std::string& inbox);
+    
+    /**
+     * Default terminate method (derived class should override).
+     */
+    virtual void term(void);
+    
+    /**
+     * Defines command topics (do not override).
+     */
+    void msgTopicsCmd(std::vector< std::string >& sub);
+    
+    /** Handles application status and command levels (do not override).
+     *
+     * @param[in] inbox input message (may be empty)
+     */
+    void msgProcessCmd(const std::string& inbox);
+    
+  private:
+    enum Status
+    {
+      OFF = 0,
+      IDLE = 1,
+      RUN = 2,
+      INIT = 3,
+      ERROR = 4,
+      TERM = 5
+    };
+    
+    App* msgApp;
+    double msgAckPeriod;
+    double msgTimeWarp;
+    Status msgStatus;
+    double msgAckTimer;
+    std::string msgCmdTopic;
+    
+    void setMsgCmd(msg::Mode msgMode);
+    std::string cacheMsgCmdTopic();
+  };
+}
+
+#endif

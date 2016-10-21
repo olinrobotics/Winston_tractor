@@ -1,0 +1,271 @@
+classdef OCDynamics < handle
+  properties (Constant = true, GetAccess = public)
+    vRateMax = 3.73966*math.MPHTOMPS;
+    kRateMax = 0.105235/math.FTTOM;
+    uSpeedMin = int32(1355);
+    uSpeedLow = int32(3050);
+    uSpeedHigh = int32(4010);
+    uSpeedMax = int32(4590);
+    uTurnMin = int32(1800);
+    uTurnMax = int32(4200);
+    vLowIntercept = 8.11581*math.MPHTOMPS;
+    vLowSlope = -0.00263299*math.MPHTOMPS;
+    vHighIntercept = 11.1818*math.MPHTOMPS;
+    vHighSlope = -0.00280668*math.MPHTOMPS;
+    kIntercept = 0.273690/math.FTTOM;
+    kSlope = -0.0000912363/math.FTTOM;
+    rpTau = 0.3; % roll and pitch time constant
+    rpScale = 0.01; % roll and pitch scaling relative to acceleration
+  end
+
+  properties (GetAccess = private, SetAccess = private)
+    init;
+    dt;
+    vDeltaMax;
+    kDeltaMax;
+    latRefR;
+    rLatM;
+    rLonM;
+  end
+  
+  methods (Access = public)
+    function this = OCDynamics(dt)
+      % Constructor.
+      this.init = false;
+      this.dt = dt;
+      this.vDeltaMax = this.vRateMax*dt;
+      this.kDeltaMax = this.kRateMax*dt;
+    end
+    
+    function n = xRealSize(this) %#ok unused arguments
+      n = 8;
+    end
+
+    function n = uRealSize(this) %#ok unused arguments
+      n = 0;
+    end
+
+    function n = yRealSize(this) %#ok unused arguments
+      n = 12;
+    end
+    
+    function n = xIntSize(this) %#ok unused arguments
+      n = 0;
+    end
+    
+    function n = uIntSize(this) %#ok unused arguments
+      n = 2;
+    end
+    
+    function n = yIntSize(this) %#ok unused arguments
+      n = 0;
+    end
+    
+    function [xReal, yReal, xInt, yInt] = f(this, xReal0, uReal, xInt0, uInt) %#ok unused arguments
+      
+      % get inputs
+      roll0 = xReal0(1); % roll radians
+      pitch0 = xReal0(2); % pitch radians
+      yaw0 = xReal0(3); % yaw radians
+      lat0 = xReal0(4); % latitude radians
+      lon0 = xReal0(5); % longitude radians
+      alt0 = xReal0(6); % altitude meters
+      w0 = xReal0(7); % yaw rate RPS
+      v0 = xReal0(8); % speed MPS
+      uTurn = uInt(1); % turn control setting
+      uSpeed = uInt(2); % speed control setting
+      
+      % initialize
+      if(~this.init)
+        this.latRefR = lat0;
+        this.rLatM = earth.WGS84.radiusOfCurvature(this.latRefR);
+        this.rLonM = cos(earth.WGS84.geodeticToGeocentric(this.latRefR))*earth.WGS84.geodeticRadius(this.latRefR);
+        this.init = true;
+      end
+
+      % speed lookup
+      vInf = this.vss(uSpeed);
+      vDiff = vInf-v0;
+      if(abs(vDiff)>this.vDeltaMax)
+        v1 = v0+sign(vDiff)*this.vDeltaMax;
+      else
+        v1 = vInf;
+      end
+      vAvg = (v0+v1)/2.0;
+      
+      % curvature lookup
+      if(abs(v0)>eps)
+        k0 = w0/v0;
+        kInf = this.kss(uTurn);
+      else
+        k0 = 0.0;
+        kInf = 0.0;
+      end
+      kDiff = kInf-k0;
+      if(abs(kDiff)>this.kDeltaMax)
+        k1 = k0+sign(kDiff)*this.kDeltaMax;
+      else
+        k1 = kInf;
+      end
+      kAvg = (k0+k1)/2.0;
+      
+      % state transition
+      w1 = k1*v1;
+      wAvg = kAvg*vAvg;
+      yawDelta = wAvg*this.dt;
+      yaw1 = yaw0+yawDelta;
+      yaw1 = atan2(sin(yaw1), cos(yaw1));
+      pathDelta = vAvg*this.dt;
+      if(abs(kAvg)<eps)
+        forwardDelta = pathDelta;
+        rightDelta = 0;
+      else
+        angleDelta = pathDelta*kAvg;
+        rightDelta = (1.0-cos(angleDelta))/kAvg;
+        forwardDelta = sin(angleDelta)/kAvg;
+      end
+      cy = cos(yaw0);
+      sy = sin(yaw0);
+      northDelta = cy*forwardDelta-sy*rightDelta;
+      eastDelta = sy*forwardDelta+cy*rightDelta;
+      lat1 = lat0+northDelta/this.rLatM;
+      lon1 = lon0+eastDelta/this.rLonM;
+      forwardRateDelta = v1-v0;
+      alpha = exp(-this.dt/this.rpTau);
+      beta = 1.0-alpha;
+      roll1 = alpha*roll0-beta*vAvg*vAvg*kAvg*this.rpScale;
+      pitch1 = alpha*pitch0+beta*forwardRateDelta/this.dt*this.rpScale;
+      rollDelta = roll1-roll0;
+      pitchDelta = pitch1-pitch0;
+      alt1 = alt0;
+      downDelta = 0.0;
+      rightRateDelta = 0.0;
+      downRateDelta = 0.0;
+      
+      % set outputs
+      xReal = [roll1; pitch1; yaw1; lat1; lon1; alt1; w1; v1];
+      yReal = [xReal(1:6); rollDelta; pitchDelta; yawDelta; forwardDelta; rightDelta; downDelta;...
+        forwardRateDelta; rightRateDelta; downRateDelta];
+      xInt = zeros(this.xIntSize(), 1, 'int32');
+      yInt = zeros(this.yIntSize(), 1, 'int32');
+    end
+    
+    function v = vss(this, u)
+      % Steady state speed lookup.
+      if(u<this.uSpeedMin)
+        v = this.vLowIntercept+this.vLowSlope*double(this.uSpeedMin);
+      elseif(u<this.uSpeedLow)
+        v = this.vLowIntercept+this.vLowSlope*double(u);
+      elseif(u<this.uSpeedHigh)
+        v = 0.0;
+      elseif(u<this.uSpeedMax)
+        v = this.vHighIntercept+this.vHighSlope*double(u);
+      else
+        v = this.vHighIntercept+this.vHighSlope*double(this.uSpeedMax);
+      end
+    end
+    
+    function u = vssInv(this, v)
+      if(v<this.vss(this.uSpeedMax))
+        u = this.uSpeedMax;
+      elseif(v<this.vss(this.uSpeedHigh))
+        u = int32((v-this.vHighIntercept)/this.vHighSlope);
+      elseif(v<this.vss(this.uSpeedLow))
+        u = (this.uSpeedLow+this.uSpeedHigh)/int32(2);
+      elseif(v<this.vss(this.uSpeedMin))
+        u = int32((v-this.vLowIntercept)/this.vLowSlope);
+      else
+        u = this.uSpeedMin;
+      end
+    end
+    
+    function k = kss(this, u)
+      % Steady state curvature lookup.
+      if(u<this.uTurnMin)
+        k = this.kIntercept+this.kSlope*double(this.uTurnMin);
+      elseif(u<this.uTurnMax)
+        k = this.kIntercept+this.kSlope*double(u);
+      else
+        k = this.kIntercept+this.kSlope*double(this.uTurnMax);
+      end
+    end
+    
+    function u = kssInv(this, k)
+      if(k<this.kss(this.uTurnMax))
+        u = this.uTurnMax;
+      elseif(k<this.kss(this.uTurnMin))
+        u = int32((k-this.kIntercept)/this.kSlope);
+      else
+        u = this.uTurnMin;
+      end
+    end
+  end
+  
+  methods (Access = public, Static = true)
+    function Test()
+      close('all');
+      
+      dt = 0.1;
+      dynamicModel = OCDynamics(dt);
+      
+      figure(1);
+      hold('on');
+      title('Steady State Speed Validation');
+      xlabel('uSpeed [CLICKS]');
+      ylabel('vInf [MPH]');
+      uSpeed = int32(1000:5:5000);
+      for n = 1:numel(uSpeed)
+        plot(uSpeed(n), dynamicModel.vss(uSpeed(n))*math.MPSTOMPH, 'r.');
+      end
+      uSpeedData = [1355, 1700, 2010, 2200, 2450, 2785, 3050, 3500, 4010, 4100, 4168, 4233, 4400, 4590];
+      vInfData = [4.520, 3.610, 2.910, 2.230, 1.680, 1.040, 0.085, 0.000, -0.073, -0.277, -0.448, -0.748, -1.120, -1.740];
+      plot(uSpeedData, vInfData, 'bx');
+      drawnow;
+      
+      figure(2);
+      hold('on');
+      title('Steady State Turn Validation');
+      xlabel('uTurn [CLICKS]');
+      ylabel('kInf [1/FT]');
+      uTurn = int32(1000:5:5000);
+      for n = 1:numel(uTurn)
+        plot(uTurn(n), dynamicModel.kss(uTurn(n))/math.MTOFT, 'r.');
+      end
+      uTurnData = [1800, 2200, 2600, 2800, 2850, 3000, 3100, 3200, 3400, 3800, 4200];
+      kInfData = 1./[9.1250, 14.2917, 32.6458, 73.0833, 106.7500, inf, -112.3542, -57.4271, -30.7292, -13.7292, -8.60421];
+      plot(uTurnData, kInfData, 'bx');
+      drawnow;
+      
+      figure(3);
+      hold('on');
+      title('Planar Model Response to u = [1355; 1800]');
+      xlabel('east [FT]');
+      ylabel('north [FT]');
+      figure(4);
+      hold('on');
+      title('Orientation Model Response to u = [1355; 1800]');
+      xlabel('time [S]');
+      ylabel('RPY [D]');
+      xReal = zeros(dynamicModel.xRealSize(), 1);
+      uReal = zeros(dynamicModel.uRealSize(), 1);
+      xInt = zeros(dynamicModel.xIntSize(), 1);
+      uInt = [int32(1800); int32(1355)];
+      for n = 1:80
+        time = n*dynamicModel.dt;
+        [xReal, yReal, xInt, yInt] = dynamicModel.f(xReal, uReal, xInt, uInt); %#ok unused outputs
+        figure(3);
+        plot(yReal(5)*dynamicModel.rLonM*math.MTOFT, yReal(4)*dynamicModel.rLatM*math.MTOFT, 'r.');
+        figure(4);
+        plot(time, yReal(1)*math.RADTODEG, 'r.');
+        plot(time, yReal(2)*math.RADTODEG, 'g.');
+        plot(time, yReal(3)*math.RADTODEG, 'b.');
+      end
+      figure(3);
+      plot(9.125, 0, 'bx');
+      axis('equal');
+      figure(4);
+      legend({'roll', 'pitch', 'yaw'});
+      drawnow;
+    end
+  end
+end

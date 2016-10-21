@@ -1,0 +1,46 @@
+{
+  "subURI": "tcp://127.0.0.1:55998", "comment": "global subscription endpoint on command station",
+  "pubURI": "tcp://127.0.0.1:55999", "comment": "global publication endpoint on command station",
+  "subURILocal": "ipc:///tmp/subURILocal", "comment": "local subscription endpoint",
+  "pubURILocal": "ipc:///tmp/pubURILocal", "comment": "local publication endpoint",
+
+  "timeSourceID": "ARDClock", "comment": "clock application identifier",
+  "ctrlTick": 0.1, "comment": "inner control loop execution rate",
+  "fastTick": 0.1, "comment": "fast execution rate",
+  "slowTick": 1.0, "comment": "slow execution rate",
+  "ackPeriod": 1.0, "comment": "minimum time between command acknowledgements",
+  "tDanger": 5.0, "comment": "planning and execution time horizon before timeout and emergency stabilization",
+
+  "ownID": "N100US", "comment": "ownship unique identifier",
+  "targetID": "N00001", "comment": "target unique identifier",
+
+  "visionRangeDetectFarM": 60.0,
+  "visionRangeDetectNearM": 50.0,
+  "visionRangeTrackFarM": 30.0,
+  "visionRangeTrackNearM": 25.0,
+  "visionRangeCaptureFarM": 0.6,
+  "visionRangeCaptureNearM": 0.5,
+  "dockAngleWideR": 0.35, "comment": "about 20 degrees",
+  "dockAngleNarrowR": 0.175, "comment": "about 10 degrees",
+
+  "cameraForwardM": 2.096, "comment": "position of camera frame relative to follower frame",
+  "cameraRightM": 0.0, "comment": "position of camera frame relative to follower frame",
+  "cameraDownM": -1.0, "comment": "position of camera frame relative to follower frame",
+
+  "ownDockForwardM": 2.347, "comment": "position of follower dock frame relative to body frame",
+  "ownDockRightM": 0.0, "comment": "position of follower dock frame relative to body frame",
+  "ownDockDownM": -1.0, "comment": "position of follower dock frame relative to body frame",
+
+  "targetDockForwardM": -1.0, "comment": "position of leader dock frame relative to body frame",
+  "targetDockRightM": 0.0, "comment": "position of leader dock frame relative to body frame",
+  "targetDockDownM": -1.0, "comment": "position of leader dock frame relative to body frame",
+
+  "imgPeriod": 1.0, "comment": "minimum time between image measurements",
+  "fiducialScaleM": 1.0, "comment": "maximum dimension of fiducial",
+  "visionAlgorithm": "RedBall", "comment": "fiducial detection algorithm name",
+ 
+  "timeWarp": 1.0, "comment": "time scaling parameter",
+  "videoName": "video.avi", "comment": "captured video output file name",
+  "maxDisplay": 1024, "comment": "maximum length of text output",
+  "maxLength": 1000000, "comment": "default maximum message length"
+}

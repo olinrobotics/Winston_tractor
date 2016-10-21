@@ -1,0 +1,62 @@
+#ifndef HIDIHIDI_H
+#define HIDIHIDI_H
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <cmath>
+#include <cstdio>
+#include <limits>
+#include <string>
+#include <vector>
+
+#ifndef EPS
+#define EPS std::numeric_limits<double>::epsilon()
+#endif
+#ifndef INF
+#define INF std::numeric_limits<double>::infinity()
+#endif
+#ifndef NAN
+#define NAN sqrt(static_cast<double>(-1.0))
+#endif
+
+#if defined(__APPLE__) || defined(_WIN32)
+static bool isnan(const double& x)
+{
+  volatile double y = x;
+  return (y!=x);
+}
+#endif
+
+#ifndef _WIN32
+#include <stdint.h>
+#else
+#include <stddef.h>
+typedef unsigned __int8 uint8_t;
+typedef __int8 int8_t;
+typedef unsigned __int16 uint16_t;
+typedef __int16 int16_t;
+typedef unsigned __int32 uint32_t;
+typedef __int32 int32_t;
+#if defined(__LP64__) || defined(_LP64)
+typedef unsigned __int64 uint64_t;
+typedef __int64 int64_t;
+#endif
+#endif
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+class _SetOutputModeBinary
+{
+public:
+  _SetOutputModeBinary(void)
+  {
+    _setmode(1, _O_BINARY);
+  }
+};
+_SetOutputModeBinary _setOutputModeBinary;
+#endif
+
+#endif

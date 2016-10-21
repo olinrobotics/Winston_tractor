@@ -1,0 +1,30 @@
+% An application that simulates the target interface of a satellite (which may or may not be controllable).
+classdef OCTractorSimTarget < ARDSim
+  properties (GetAccess = public, Constant = true)
+    vehicleModelName = 'CartBall';
+    dockForwardM = -1.0;
+    dockDownM = -1.0;
+    latR0 = 42.3656*math.DEGTORAD;
+    lonR0 = -71.0096*math.DEGTORAD;
+    altM0 = 0.0;
+    xReal0 = [zeros(3, 1);...
+      OCTractorSimTarget.latR0;...
+      OCTractorSimTarget.lonR0;...
+      OCTractorSimTarget.altM0;...
+      zeros(3, 1)];
+    uInt0 = [int32(3000); int32(3500)];
+  end
+  
+  methods (Access = public)
+    function this = OCTractorSimTarget()
+      cfg = JSONRead('guard.json');
+      dynamicModel = OCDynamics(ARDSim.simPeriod);
+      this = this@ARDSim(cfg.targetID, dynamicModel, OCTractorSimTarget.xReal0, zeros(0, 1), zeros(0, 1, 'int32'),...
+        OCTractorSimTarget.uInt0);
+      [pbRPY, pbLatLon, pbAlt] = this.getState();
+      this.graphicModel = FlightGear.Target(this.port, OCTractorSimTarget.vehicleModelName, cfg.targetID,...
+        pbLatLon.getLatR()*math.RADTODEG, pbLatLon.getLonR()*math.RADTODEG, pbAlt.getAltM()*math.MTOFT,...
+        pbRPY.getRollR()*math.RADTODEG, pbRPY.getPitchR()*math.RADTODEG, pbRPY.getYawR()*math.RADTODEG);
+    end
+  end
+end

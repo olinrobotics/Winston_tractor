@@ -1,0 +1,59 @@
+#include "+Msg/App.h"
+#include "+Msg/Exec.h"
+#include "+Msg/Proto.h"
+#include "JSONRead.h"
+
+// protocol
+#include "nav/nav.pb.cc"
+
+// configuration
+static JSONRead cfg("guard.json");
+
+class OCExample : virtual public Msg::App, virtual public Msg::Log
+{
+public:
+  OCExample(void) :
+    Msg::App("OCExample", cfg.get<double>("fastTick"), cfg.get<double>("slowTick"), cfg.get<double>("maxLength")),
+    Msg::Log(this)
+  {}
+
+  void topics(std::vector< std::string >& sub)
+  {
+    sub.assign(1, ""); // subscribe to all topics
+    return;
+  }
+  
+  void process(const std::string& inbox)
+  {
+    std::string type;
+    std::string id;
+    std::string data;
+    if(inbox.empty())
+    {
+      this->log("OCExample got an appTick");
+    }
+    else
+    {
+      nav::RPY rpy;
+      Msg::Proto::unpack(inbox, type, id, data);
+      if(!type.compare("nav.RPY"))
+      {
+        rpy.ParseFromString(data);
+        this->log("got RPY time = %f", rpy.times());
+      }
+    }
+  }
+};
+
+int main(int argc, char* argv[])
+{
+  if(argc<3)
+  {
+    printf("usage: OC/OCExample subURI pubURI\n");
+    return EXIT_FAILURE;
+  }
+  OCExample app;
+  Msg::Exec* msgExec = Msg::Exec::getInstance(cfg.get<double>("timeWarp"));
+  msgExec->start(&app, argv[1], argv[2]);
+  return EXIT_FAILURE;
+}

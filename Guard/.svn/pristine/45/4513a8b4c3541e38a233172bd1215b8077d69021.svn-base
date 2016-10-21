@@ -1,0 +1,386 @@
+% An application that produces waypoints for a vehicle to follow.
+classdef OCPlanner < Msg.App & Msg.Log
+  properties (Constant = true, GetAccess = public)
+    algorithm = 'circle';
+    missionAppID = 'ARDAutonomy';
+    relax = 0.8; % relaxation of dynamic constraints
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    cfg
+    own
+    target
+    behavior
+    minRadius
+    maxSpeed
+    lowSpeed
+    spacing
+    vRate
+    rLatM
+    rLonM
+  end
+  
+  methods (Access = public)
+    function this = OCPlanner()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick, cfg.slowTick);
+      this = this@Msg.Log();
+      this.cfg = cfg;
+      this.minRadius = 1.0/(OCDynamics.kss(OCDynamics.uTurnMin)*OCPlanner.relax);
+      vMax = OCDynamics.vss(OCDynamics.uSpeedMin);
+      vLow = OCDynamics.vss(OCDynamics.uSpeedLow);
+      this.maxSpeed = vMax*OCPlanner.relax+vLow*(1.0-OCPlanner.relax);
+      this.lowSpeed = vLow*OCPlanner.relax+vMax*(1.0-OCPlanner.relax);
+      this.spacing = pi*this.minRadius/8.0; % 16 segments around the minimum radius circle
+      this.vRate = OCDynamics.vRateMax*OCPlanner.relax;
+    end
+    
+    function sub = topics(this)
+      sub{1, 1} = Msg.Proto.topic('nav.FusedState', this.cfg.ownID);
+      sub{2, 1} = Msg.Proto.topic('nav.FusedState', this.cfg.targetID);
+      sub{3, 1} = Msg.Proto.topic('nav.Mission', OCPlanner.missionAppID);
+    end
+    
+    function process(this, inbox)
+      % TODO: eventually should check ownship sigmas and replan accordingly
+      if(~isempty(inbox))
+        [topic, id, pb] = Msg.Proto.unpack(inbox);
+        switch(topic)
+          case 'nav.FusedState'
+            if(strcmp(id, this.cfg.ownID))
+              this.own = pb;
+            elseif(strcmp(id, this.cfg.targetID))
+              this.target = pb;
+            end
+          case 'nav.Mission'
+            this.behavior = pbGetBehavior(pb);
+        end
+      else
+        if(~isempty(this.own)&&~isempty(this.target))
+          switch(OCPlanner.algorithm)
+            case 'dubins'
+              timeA = this.own.getTimeS();
+              timeDeltaA = this.own.getTimeDeltaS();
+              yawA = this.own.getYawR();
+              yawRateA = this.own.getYawDeltaR()/timeDeltaA;
+              latA = this.own.getLatR();
+              lonA = this.own.getLonR();
+              forwardRateA = this.own.getForwardDeltaM()/timeDeltaA;
+              
+              switch(uint8(this.behavior))
+                case uint8(Behavior.APPROACH)
+                  timeB = this.target.getTimeS();
+                  timeDeltaB = this.target.getTimeS();
+                  yawB = this.target.getYawR();
+                  yawRateB = this.target.getYawDeltaR()/timeDeltaB;
+                  latB = this.target.getLatR();
+                  lonB = this.target.getLonR();
+                  forwardRateB = this.target.getForwardDeltaM()/timeDeltaB;
+                otherwise % Behavior.LOITER
+                  timeB = timeA;
+                  timeDeltaB = timeDeltaA;
+                  yawB = yawA;
+                  yawRateB = yawRateA;
+                  latB = latA;
+                  lonB = lonA;
+                  forwardRateB = forwardRateA;
+              end
+              
+              if(isempty(this.rLatM))
+                this.rLatM = earth.WGS84.radiusOfCurvature(latA);
+                this.rLonM = cos(earth.WGS84.geodeticToGeocentric(latA))*earth.WGS84.geodeticRadius(latA);
+              end
+              
+              % plan path in relative north-east
+              northA = 0.0;
+              eastA = 0.0;
+              northB = (latB-latA)*this.rLatM;
+              eastB = (lonB-lonA)*this.rLonM;
+              
+              % plan to the target
+              dtD = timeB-timeA; % can be negative
+              dsD = dtD*forwardRateB; % can be negative
+              dsC = dsD-this.cfg.tDanger*forwardRateB; % can be negative
+              dsE = dsD+this.cfg.tDanger*forwardRateB;
+              
+              [forwardBC, rightBC, yawBC] = evalCircleS(forwardRateB, yawRateB, dsC);
+              yawC = math.Rotation.wrapToPI(yawB+yawBC);
+              northC = northB+forwardBC*cos(yawB)-rightBC*sin(yawB);
+              eastC = eastB+forwardBC*sin(yawB)+rightBC*cos(yawB);
+              
+              [forwardBD, rightBD, yawBD] = evalCircleS(forwardRateB, yawRateB, dsD);
+              yawD = math.Rotation.wrapToPI(yawB+yawBD);
+              northD = northB+forwardBD*cos(yawB)-rightBD*sin(yawB);
+              eastD = eastB+forwardBD*sin(yawB)+rightBD*cos(yawB);
+              
+              [forwardBE, rightBE, yawBE] = evalCircleS(forwardRateB, yawRateB, dsE);
+              yawE = math.Rotation.wrapToPI(yawB+yawBE);
+              northE = northB+forwardBE*cos(yawB)-rightBE*sin(yawB);
+              eastE = eastB+forwardBE*sin(yawB)+rightBE*cos(yawB);
+              
+              closingDist = sqrt(northC*northC+eastC*eastC);
+              
+              stateA = [northA; eastA; yawA];
+              stateC = [northC; eastC; yawC];
+              stateD = [northD; eastD; yawD];
+              stateE = [northE; eastE; yawE];
+              if(closingDist<=2.0*this.spacing)
+                path = [stateA, stateD, stateE];
+              else
+                path = dubins(stateA', stateC', 2.0*this.minRadius, this.spacing);
+                path = [path, stateD, stateE];
+              end
+              
+              K = size(path, 2);
+              if(K>=2)
+                % extract elements
+                north = path(1, :);
+                east = path(2, :);
+                yaw = path(3, :);
+                
+                % convert back to lat-lon
+                lat = latA+north/this.rLatM;
+                lon = lonA+east/this.rLonM;
+                
+                % plan forwardRate profile
+                dtMin = this.spacing/this.maxSpeed;
+                vDelta = this.vRate*dtMin;
+                forwardRate = zeros(1, K);
+                forwardRate(1) = forwardRateA;
+                forwardRate(K-1) = forwardRateB;
+                forwardRate(K) = forwardRateB;
+                kLow = 1;
+                kHigh = K-1;
+                direction = forwardRateB>forwardRateA;
+                while(kLow<(kHigh-1))
+                  if(direction)
+                    kLow = kLow+1;
+                    forwardRateA = min(forwardRateA+vDelta, min(this.maxSpeed, forwardRate(K)+this.maxSpeed/2.0));
+                    forwardRate(kLow) = forwardRateA;
+                  else
+                    kHigh = kHigh-1;
+                    forwardRateB = min(forwardRateB+vDelta, min(this.maxSpeed, forwardRate(K)+this.maxSpeed/2.0));
+                    forwardRate(kHigh) = forwardRateB;
+                  end
+                  direction = forwardRateB>forwardRateA;
+                end
+                
+                % plan time profile
+                forwardRateAvg = (forwardRate(1:(K-1))+forwardRate(2:K))/2.0;
+                forwardRateAvg((forwardRateAvg<this.lowSpeed)&(forwardRateAvg>=0)) = this.lowSpeed;
+                forwardRateAvg((forwardRateAvg<0.0)&(forwardRateAvg>-this.lowSpeed)) = -this.lowSpeed;
+                time = zeros(1, K);
+                time(1) = timeA;
+                for k = 2:(K-1)
+                  time(k) = time(k-1)+norm([north(k)-north(k-1); east(k)-east(k-1)])/forwardRateAvg(k-1); % denominator depends on K>2 loop index
+                end
+                time(K) = time(K-1)+this.cfg.tDanger;
+                
+                % plan rotation rate profile
+                yawRate = gradient(unwrap(yaw))./gradient(time);
+                yawRate(1) = yawRateA;
+                yawRate(K) = yawRateB;
+              end
+              
+            case 'circle'
+              timeB = this.target.getTimeS();
+              timeDeltaB = this.target.getTimeDeltaS();
+              yawB = this.target.getYawR();
+              yawRateB = this.target.getYawDeltaR()/timeDeltaB;
+              latB = this.target.getLatR();
+              lonB = this.target.getLonR();
+              forwardRateB = this.target.getForwardDeltaM()/timeDeltaB; % assumed to be non-negative
+              
+              if(isempty(this.rLatM))
+                this.rLatM = earth.WGS84.radiusOfCurvature(latB);
+                this.rLonM = cos(earth.WGS84.geodeticToGeocentric(latB))*earth.WGS84.geodeticRadius(latB);
+              end
+              
+              dtStep = 1.0;
+              dtMax = 2.0*this.cfg.tDanger;
+              dtMin = -2.0;
+              trailSpeed = forwardRateB;%+0.2*this.maxSpeed; %forwardRateB
+              if(trailSpeed>forwardRateB)
+                dtDecel = (trailSpeed-forwardRateB)/this.vRate;
+                dsDecel = forwardRateB+0.5*this.vRate*dtDecel*dtDecel;
+              else
+                dtDecel = dtStep;
+                dsDecel = trailSpeed*dtStep;
+              end
+              dtTrail = fliplr(0.0:-dtStep:dtMin);
+              dt = [dtTrail-dtDecel, (0.0:dtStep:dtMax)];
+              ds = [dtTrail*trailSpeed-dsDecel, (0.0:dtStep:dtMax)*forwardRateB];
+              
+              K = numel(dt);
+              
+              if(abs(forwardRateB)>eps)
+                curvature = yawRateB/forwardRateB;
+              else
+                curvature = 0.0;
+              end
+              [forward, right, yaw] = evalCircleS(forwardRateB, yawRateB, ds);
+              yaw = math.Rotation.wrapToPI(yawB+yaw);
+              north = forward.*cos(yawB)-right.*sin(yawB);
+              east = forward.*sin(yawB)+right.*cos(yawB);
+              forwardRate = [repmat(trailSpeed, 1, numel(dtTrail)), repmat(forwardRateB, 1, K-numel(dtTrail))];
+              yawRate = curvature*forwardRate;
+              time = timeB+dt;
+              
+              % convert back to lat-lon
+              lat = latB+north/this.rLatM;
+              lon = lonB+east/this.rLonM;
+              
+%             case 'hybrid'
+%               timeA = this.own.getTimeS();
+%               timeDeltaA = this.own.getTimeDeltaS();
+%               yawA = this.own.getYawR();
+%               yawRateA = this.own.getYawDeltaR()/timeDeltaA;
+%               latA = this.own.getLatR();
+%               lonA = this.own.getLonR();
+%               forwardRateA = this.own.getForwardDeltaM()/timeDeltaA;
+%               
+%               switch(uint8(this.behavior))
+%                 case uint8(Behavior.APPROACH)
+%                  timeB = this.target.getTimeS();
+%                  timeDeltaB = this.target.getTimeDeltaS();
+%                  yawB = this.target.getYawR();
+%                  yawRateB = this.target.getYawDeltaR()/timeDeltaB;
+%                  latB = this.target.getLatR();
+%                  lonB = this.target.getLonR();
+%                  forwardRateB = this.target.getForwardDeltaM()/timeDeltaB; % assumed to be non-negative
+%                 otherwise % Behavior.LOITER
+%                   % TODO: plan deceleration to halt
+%                   timeB = timeA;
+%                   timeDeltaB = timeDeltaA;
+%                   yawB = yawA;
+%                   yawRateB = yawRateA;
+%                   latB = latA;
+%                   lonB = lonA;
+%                   forwardRateB = forwardRateA;
+%               end
+%               
+%               if(isempty(this.rLatM))
+%                 this.rLatM = earth.WGS84.radiusOfCurvature(latB);
+%                 this.rLonM = cos(earth.WGS84.geodeticToGeocentric(latB))*earth.WGS84.geodeticRadius(latB);
+%               end
+%               
+%               dtStep = 1.0;
+%               dtMax = 2.0*this.cfg.tDanger;
+%               dtTrail = -2.0;
+%               if(this.maxSpeed>forwardRateB)
+%                 dtDecel = (this.maxSpeed-forwardRateB)/this.vRate;
+%                 dsDecel = forwardRateB+0.5*this.vRate*dtDecel*dtDecel;
+%               else
+%                 dtDecel = dtStep;
+%                 dsDecel = this.maxSpeed*dtStep;
+%               end
+%               dt = [fliplr(0.0:-dtStep:dtTrail)-dtDecel, (0.0:dtStep:dtMax)];
+%               ds = [fliplr(0.0:-dtStep:dtTrail)*this.maxSpeed-dsDecel, (0.0:dtStep:dtMax)*forwardRateB];
+%               
+%               K = numel(dt);
+%               
+%               [forward, right, yaw] = evalCircleS(forwardRateB, yawRateB, ds);
+%               yaw = math.Rotation.wrapToPI(yawB+yaw);
+%               north = forward.*cos(yawB)-right.*sin(yawB);
+%               east = forward.*sin(yawB)+right.*cos(yawB);
+%               yawRate = repmat(yawRateB, 1, K);
+%               forwardRate = repmat(forwardRateB, 1, K);
+%               time = timeB+dt;
+%               
+%               % plan backward to follower
+%               northA = (latA-latB)*this.rLatM;
+%               eastA = (lonA-lonB)*this.rLonM;
+%               closingDist = sqrt(northA*northA+eastA*eastA);
+%               
+%               stateA = [northA; eastA; yawA];
+%               stateC = [northC; eastC; yawC];
+%               stateD = [northD; eastD; yawD];
+%               stateE = [northE; eastE; yawE];
+%               if(closingDist<=dsDecel)
+%                 path = [stateA, stateD, stateE];
+%               else
+%                 path = dubins(stateA', stateC', 2.0*this.minRadius, this.spacing);
+%                 path = [path, stateD, stateE];
+%               end
+%               
+%               % convert back to lat-lon
+%               lat = latB+north/this.rLatM;
+%               lon = lonB+east/this.rLonM;
+          end
+          
+          % construct output
+          pb = nav.WaystatesBuilder();
+          for k = 1:K
+            addState(pb, time(k), yaw(k), lat(k), lon(k), yawRate(k), forwardRate(k));
+          end
+          this.send(Msg.Proto.pack('nav.Waystates', this.cfg.ownID, pb));
+        end
+      end
+    end
+  end
+end
+
+
+function [x, y, p] = evalCircleT(v0, pd0, t)
+[M, N] = size(t);
+if(abs(pd0)<=eps)
+  r0 = inf;
+else
+  r0 = v0/pd0;
+end
+absr0 = abs(r0);
+if(absr0<=eps)
+  p = zeros(M, N);
+  x = zeros(M, N);
+  y = zeros(M, N);
+elseif(absr0>=(1.0/eps))
+  p = zeros(M, N);
+  x = t*v0;
+  y = zeros(M, N);
+else
+  p = t*pd0;
+  x = r0*sin(p);
+  y = r0*(1.0-cos(p));
+end
+end
+
+
+function [x, y, p] = evalCircleS(v0, pd0, s)
+[M, N] = size(s);
+if(abs(pd0)<=eps)
+  r0 = inf;
+else
+  r0 = v0/pd0;
+end
+absr0 = abs(r0);
+if(absr0<=eps)
+  p = zeros(M, N);
+  x = zeros(M, N);
+  y = zeros(M, N);
+elseif(absr0>=(1.0/eps))
+  p = zeros(M, N);
+  x = s;
+  y = zeros(M, N);
+else
+  p = s/r0;
+  x = r0*sin(p);
+  y = r0*(1.0-cos(p));
+end
+end
+
+
+function addState(pb, timeS, yawR, latR, lonR, yawRateRPS, forwardRateMPS)
+pb.addTimeS(timeS);
+pb.addRollR(0.0);
+pb.addPitchR(0.0);
+pb.addYawR(yawR);
+pb.addLatR(latR);
+pb.addLonR(lonR);
+pb.addAltM(0.0);
+pb.addRollRateRPS(0.0);
+pb.addPitchRateRPS(0.0);
+pb.addYawRateRPS(yawRateRPS);
+pb.addForwardRateMPS(forwardRateMPS);
+pb.addRightRateMPS(0.0);
+pb.addDownRateMPS(0.0);
+end

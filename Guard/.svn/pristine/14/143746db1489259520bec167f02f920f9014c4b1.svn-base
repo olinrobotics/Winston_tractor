@@ -1,0 +1,176 @@
+% Dynamic and graphical model for vehicle simulations.
+classdef ARDSim < Msg.App & Msg.Cmd & Msg.Time & Msg.Log
+  properties (GetAccess = public, Constant = true)
+    port = FlightGear.Base.nextPort(FlightGear.Config.multiPortRange);
+    simPeriod = 1.0/str2double(FlightGear.Config.hz);
+  end
+
+  properties (GetAccess = public, SetAccess = public)
+    vehicleID
+    dynamicModel
+    xReal
+    uReal
+    xInt
+    uInt
+    yReal
+    yInt
+    time
+    graphicModel
+    simTick
+  end
+  
+  methods (Access = public)
+    function this = ARDSim(vehicleID, dynamicModel, xReal0, uReal0, xInt0, uInt0)
+      if(nargin<3)
+        xReal0 = zeros(dynamicModel.xRealSize(), 1);
+      end
+      if(nargin<4)
+        uReal0 = zeros(dynamicModel.uRealSize(), 1);
+      end
+      if(nargin<5)
+        xInt0 = zeros(dynamicModel.xIntSize(), 1, 'int32');
+      end
+      if(nargin<6)
+        uInt0 = zeros(dynamicModel.uIntSize(), 1, 'int32');
+      end
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(vehicleID, cfg.fastTick, cfg.fastTick);
+      this = this@Msg.Cmd(cfg.ackPeriod, cfg.timeWarp);
+      this = this@Msg.Time(cfg.timeSourceID, cfg.timeWarp);
+      this = this@Msg.Log();
+      this.vehicleID = vehicleID;
+      this.dynamicModel = dynamicModel;
+      this.xReal = xReal0;
+      this.uReal = uReal0;
+      this.xInt = xInt0;
+      this.uInt = uInt0;
+      [~, this.yReal, ~, this.yInt] = this.dynamicModel.f(this.xReal, this.uReal, this.xInt, this.uInt);
+      this.time = 0.0;
+    end
+    
+    function delete(this)
+      this.dynamicModel.delete();
+      if(~isempty(this.graphicModel))
+        this.graphicModel.delete();
+        this.graphicModel = [];
+      end
+    end
+
+    function sub = topics(this)
+      sub{1, 1} = Msg.Proto.topic('nav.Ctrl', this.vehicleID);
+    end
+    
+    function done = init(this)
+      if(isempty(this.simTick))
+        this.simTick = this.tick();      
+      end
+      done = (~this.graphicModel.isBusy())&this.isTimeSet();
+      if(done)
+        this.time = this.getTime();
+      end
+    end
+    
+    function idle(this, inbox)
+      if(isempty(inbox))
+        this.refreshApp();
+      end
+    end
+    
+    function done = run(this, inbox)
+      if(isempty(inbox))
+        this.refreshApp();
+      else
+        [type, id, pb] = Msg.Proto.unpack(inbox);
+        if(strcmp(id, this.vehicleID));
+          switch(type)
+            case 'nav.Ctrl'
+              N = pb.getUCount();
+              this.uReal = zeros(N, 1);
+              for n = 1:N
+                this.uReal(n) = pb.getU(n-1);
+              end
+            otherwise
+              % nop
+          end
+        else
+          % nop
+        end
+      end
+      done = false;
+    end
+
+    function refresh(this, dt)
+      while((this.time+dt)<=this.getTime())
+        [this.xReal, this.yReal, this.xInt, this.yInt] = ...
+          this.dynamicModel.f(this.xReal, this.uReal, this.xInt, this.uInt);
+        this.time = this.time+dt;
+      end
+    end
+    
+    function [pbRPY, pbLatLon, pbAlt, pbBodyRPYDelta, pbBodyFRDDelta, pbBodyFRDRateDelta] = getState(this)
+      % Get state (simulation only).
+      pbRPY = nav.RPYBuilder();
+      pbRPY.setTimeS(this.time);
+      pbRPY.setRollR(this.yReal(1));
+      pbRPY.setPitchR(this.yReal(2));
+      pbRPY.setYawR(this.yReal(3));
+      if(nargout>=2)
+        pbLatLon = nav.LatLonBuilder();
+        pbLatLon.setTimeS(this.time);
+        pbLatLon.setLatR(this.yReal(4));
+        pbLatLon.setLonR(this.yReal(5));
+        if(nargout>=3)
+          pbAlt = nav.AltBuilder();
+          pbAlt.setTimeS(this.time);
+          pbAlt.setAltM(this.yReal(6));
+          if(nargout>=4)
+            pbBodyRPYDelta = nav.BodyRPYDeltaBuilder();
+            pbBodyRPYDelta.setTimeS(this.time);
+            pbBodyRPYDelta.setTimeDeltaS(this.simPeriod);
+            pbBodyRPYDelta.setRollDeltaR(this.yReal(7));
+            pbBodyRPYDelta.setPitchDeltaR(this.yReal(8));
+            pbBodyRPYDelta.setYawDeltaR(this.yReal(9));
+            if(nargout>=5)
+              pbBodyFRDDelta = nav.BodyFRDDeltaBuilder();
+              pbBodyFRDDelta.setTimeS(this.time);
+              pbBodyFRDDelta.setTimeDeltaS(this.simPeriod);
+              pbBodyFRDDelta.setForwardDeltaM(this.yReal(10));
+              pbBodyFRDDelta.setRightDeltaM(this.yReal(11));
+              pbBodyFRDDelta.setDownDeltaM(this.yReal(12));
+              if(nargout>=6)
+                pbBodyFRDRateDelta = nav.BodyFRDRateDeltaBuilder();
+                pbBodyFRDRateDelta.setTimeS(this.time);
+                pbBodyFRDRateDelta.setTimeDeltaS(this.simPeriod);
+                pbBodyFRDRateDelta.setForwardRateDeltaMPS(this.yReal(13));
+                pbBodyFRDRateDelta.setRightRateDeltaMPS(this.yReal(14));
+                pbBodyFRDRateDelta.setDownRateDeltaMPS(this.yReal(15));
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  
+  methods (Access = private)
+    function refreshApp(this)
+      dt = this.tock(this.simTick);
+      this.simTick = this.tick();
+      this.refresh(dt);
+      if(~this.graphicModel.isBusy())
+        [pbRPY, pbLatLon, pbAlt, pbBodyRPYDelta, pbBodyFRDDelta, pbBodyFRDRateDelta] = this.getState();
+        this.graphicModel.setLLARPY(pbLatLon.getLatR()*math.RADTODEG, pbLatLon.getLonR()*math.RADTODEG,...
+          pbAlt.getAltM()*math.MTOFT, pbRPY.getRollR()*math.RADTODEG, pbRPY.getPitchR()*math.RADTODEG,...
+          pbRPY.getYawR()*math.RADTODEG);
+        this.send(Msg.Proto.pack('nav.RPY', this.vehicleID, pbRPY));
+        this.send(Msg.Proto.pack('nav.LatLon', this.vehicleID, pbLatLon));
+        this.send(Msg.Proto.pack('nav.Alt', this.vehicleID, pbAlt));
+        this.send(Msg.Proto.pack('nav.BodyRPYDelta', this.vehicleID, pbBodyRPYDelta));
+        this.send(Msg.Proto.pack('nav.BodyFRDDelta', this.vehicleID, pbBodyFRDDelta));
+        this.send(Msg.Proto.pack('nav.BodyFRDRateDelta', this.vehicleID, pbBodyFRDRateDelta));
+        this.log('LatD=%+016.12f;LonD=%+017.12f;AltM=%09.2f', pbLatLon.getLatR()*math.RADTODEG, pbLatLon.getLonR()*math.RADTODEG,...
+          pbAlt.getAltM());
+      end
+    end
+  end
+end

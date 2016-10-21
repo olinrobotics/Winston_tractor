@@ -1,0 +1,3 @@
+function terminalStart(appName, subURI, pubURI)
+system(['xterm -hold -e ', appName, ' "', subURI, '" "', pubURI, '" &']);
+end

@@ -1,0 +1,19 @@
+function pbSetMsgMode(pb, msgMode)
+persistent OFF IDLE RUN
+if(isempty(OFF))
+  OFF = javaMethod('valueOf', 'msg$Mode', 'OFF');
+  IDLE = javaMethod('valueOf', 'msg$Mode', 'IDLE');
+  RUN = javaMethod('valueOf', 'msg$Mode', 'RUN');
+end
+if(~isa(msgMode, 'msg$Mode'))
+  switch(msgMode)
+    case Msg.Mode.IDLE
+      msgMode = IDLE;
+    case Msg.Mode.RUN
+      msgMode = RUN;
+    otherwise
+      msgMode = OFF;
+  end
+end
+pb.setMode(msgMode);
+end

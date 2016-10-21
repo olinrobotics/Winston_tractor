@@ -1,0 +1,106 @@
+#include "+Msg/App.h"
+#include "+Msg/Proto.h"
+#include "+Msg/Transport.h"
+#include "+hidi/pause.h"
+#include "JSONRead.h"
+
+// protocol
+#include "nav/nav.pb.cc"
+
+// configuration
+static JSONRead cfg("guard.json");
+static std::string ownID = cfg.get<std::string>("ownID");
+
+class OCExampleSend : virtual public Msg::App, virtual public Msg::Time
+{
+public:  
+  OCExampleSend(void) :
+    Msg::App("OCExampleSend", INF, INF, cfg.get<double>("maxLength")),
+    Msg::Time(this, cfg.get<std::string>("timeSourceID"), cfg.get<double>("timeWarp"))
+  {}
+  
+  void processLatLon(const double& latR, const double& lonR)
+  {
+    std::string outbox;
+    nav::LatLon latLon;
+    
+    // if time is set
+    if(this->isTimeSet())
+    {
+      // get time stamp and fill in the data structure
+      latLon.set_times(this->getTime());
+      latLon.set_latr(latR);
+      latLon.set_lonr(lonR);
+      
+      // serialize output
+      Msg::Proto::pack("nav.LatLon", ownID, latLon.SerializeAsString(), outbox);
+      
+      // send output
+      this->send(outbox);
+      printf("%f\n", this->getTime());
+    }
+    return;
+  }
+};
+
+static void OCExampleSendWrapper(const double& latR, const double& lonR)
+{
+  // variables that will created during the first function call
+  static Msg::Transport transport(cfg.get<std::string>("subURI"), cfg.get<std::string>("pubURI"), 
+    cfg.get<double>("maxLength"));
+  static OCExampleSend app;
+  static bool init = false;
+  
+  // temporary variables
+  size_t k;
+  std::vector< std::string > msgTopics;
+  std::string message;
+  
+  // set subscriptions during the first function call
+  if(!init)
+  {
+    app.msgTopics(msgTopics);
+    for(k = 0; k<msgTopics.size(); ++k)
+    {
+      transport.subscribe(msgTopics[k]);
+    }
+    init = true;
+  }
+  
+  // receive and process all time stamp messages
+  transport.receive(message);
+  while(!message.empty())
+  {
+    app.msgProcess(message);
+    transport.receive(message);
+  }
+  
+  // process measurements
+  app.processLatLon(latR, lonR);
+  
+  // send outgoing messages
+  for(k = 0; k<app.msgOutbox.size(); ++k)
+  {
+    transport.send(app.msgOutbox[k]);
+  }
+      
+  // clear the outbox
+  app.msgClear();
+  return;
+}
+
+// This main loop simulates LabView calling OCExampleSendWrapper() at 1Hz.
+int main(void)
+{
+  static const double dt = .05;
+  double latR = 0.0;
+  double lonR = 0.0;
+  while(true)
+  {
+    latR += 0.0001; // simulates measurement
+    lonR += 0.0002; // simulates measurement
+    OCExampleSendWrapper(latR, lonR);
+    hidi::pause(dt);
+  }
+  return EXIT_SUCCESS;
+}

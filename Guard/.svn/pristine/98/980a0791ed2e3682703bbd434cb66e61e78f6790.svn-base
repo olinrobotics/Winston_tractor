@@ -1,0 +1,139 @@
+namespace Msg
+{
+  // Get system time as an integer.
+  //
+  // @param[out] usec system time as an integer
+  uint64_t Time::tick(void)
+  {
+    uint64_t usec;
+    usec = static_cast<uint64_t>(floor(hidi::getCurrentTime()*1000000.0));
+    return usec;
+  }
+  
+  // Compute elapsed time.
+  //
+  // @param[in]  usec system time as an integer
+  // @param[out] dt   elapsed time in seconds
+  double Time::tock(const uint64_t& usec)
+  {
+    double toc;
+    double dt;
+    toc = static_cast<double>(this->tick()-usec)/1000000.0;
+    dt = this->msgTimeWarp*toc;
+    return dt;
+  }
+  
+  // Determine whether the time has been set.
+  //
+  // @param[out] flag indicates whether time has been set
+  bool Time::isTimeSet(void)
+  {
+    return this->msgTimeSet;
+  }
+  
+  // Set the current time.
+  //
+  // @param[in] time value to accept as the current time
+  void Time::setTime(const double& time)
+  {
+    this->msgTimeSys = this->tick();
+    this->msgTimeRef = time;
+    this->msgTimeSet = true;
+    return;
+  }
+  
+  // Get the current time.
+  //
+  // @param[out] time current time including warp factor
+  double Time::getTime(void)
+  {
+    double sysTime;
+    double time;
+    if(this->msgTimeSet)
+    {
+      sysTime = static_cast<double>(this->tick()-this->msgTimeSys)/1000000.0;
+      time = this->msgTimeRef+this->msgTimeWarp*sysTime;
+    }
+    else
+    {
+      time = this->msgTimeRef;
+    }
+    return time;
+  }
+  
+  // Publish the current time.
+  void Time::sendTime(void)
+  {
+    double time;
+    msg::Time msgTime;
+    time = this->getTime();
+    msgTime.set_times(time);
+    this->msgApp->send(Msg::Proto::pack("msg.Time", this->msgApp->msgAppID, msgTime.SerializeAsString()));
+  }
+  
+  // Inserts a time topic.
+  //
+  // @param[in] sub cell array of message headers defining subscription topics
+  void Time::msgTopicsTime(std::vector< std::string >& sub)
+  {
+    sub.clear();
+    if(this->msgApp->msgAppID.compare(this->msgTimeSourceID))
+    {
+      sub.push_back(this->msgTimeTopic);
+    }
+    return;
+  }
+  
+  // Inserts a time handling process.
+  //      
+  // @param[in] inbox input message (may be empty)
+  void Time::msgProcessTime(const std::string& inbox)
+  {
+    std::string topic;
+    std::string id;
+    std::string pbData;
+    msg::Time msgTime;
+    double time;
+    if(!this->msgTimeTopic.empty())
+    {
+      if(Msg::Proto::isTopic(inbox, this->msgTimeTopic))
+      {
+        Msg::Proto::unpack(inbox, topic, id, pbData);
+        msgTime.ParseFromString(pbData);
+        time = msgTime.times();
+        if(time>this->getTime())
+        {
+          this->setTime(time);
+        }
+      }
+    }
+    return;
+  }
+  
+  // Constructor.
+  //
+  // @param[in] msgTimeSourceID application identifier of time source
+  // @param[in] msgTimeWarp     time scaling parameter
+  Time::Time(App* msgApp, const std::string& msgTimeSourceID, const double& msgTimeWarp)
+  {
+    this->msgApp = msgApp;
+    if(this->msgApp->msgAppID.empty())
+    {
+      throw("Time: App must be initialized before Time");
+    }
+    this->msgTimeSourceID = msgTimeSourceID;
+    this->msgTimeWarp = msgTimeWarp;
+    this->msgTimeSys = 0;
+    this->msgTimeRef = 0.0;
+    this->msgTimeSet = false;
+    if(!this->msgApp->msgAppID.compare(this->msgTimeSourceID))
+    {
+      this->msgTimeTopic = "";
+    }
+    else
+    {
+      this->msgTimeTopic = Msg::Proto::topic("msg.Time", this->msgTimeSourceID);
+    }
+    this->msgApp->msgTime = this;
+  }
+}

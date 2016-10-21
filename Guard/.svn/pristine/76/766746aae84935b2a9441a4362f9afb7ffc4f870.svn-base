@@ -1,0 +1,203 @@
+classdef OCDriver < Msg.App & Msg.Cmd & Msg.Time & Msg.Log
+  methods (Access = public)
+    function this = OCDriver()
+      cfg = JSONRead('guard.json');
+      this@Msg.App(cfg.ownID, cfg.fastTick, cfg.ctrlTick, cfg.maxLength);
+      this@Msg.Cmd(cfg.ackPeriod, cfg.timeWarp);
+      this@Msg.Time(cfg.timeSourceID, cfg.timeWarp);
+      this@Msg.Log();
+      this.cfg = cfg;
+      this.own = [];
+      this.way = [];
+      this.ready = false;
+      this.ownTopic = Msg.Proto.topic('nav.FusedState', cfg.ownID);
+      this.wayTopic = Msg.Proto.topic('nav.Waystates', cfg.ownID);
+      this.uTurnDefault = OCDynamics.kssInv(0);
+      this.uSpeedDefault = OCDynamics.vssInv(0);
+    end
+
+    function sub = topics(this)
+      sub{1, 1} = this.ownTopic;
+      sub{2, 1} = this.wayTopic;
+    end
+  
+    function done = init(this)
+      this.sendCtrl(this.uTurnDefault, this.uSpeedDefault);
+      done = this.isTimeSet();
+    end
+
+    function idle(this, inbox)
+      if(isempty(inbox))
+        this.sendCtrl(this.uTurnDefault, this.uSpeedDefault);
+      else
+        this.processInbox(inbox);
+      end
+    end
+
+    function done = run(this, inbox)
+      if(isempty(inbox))
+        done = true;
+        if(this.ready)
+          N = this.way.getTimeSCount();
+          if(N>0)
+            % TODO: check ownship sigmas and set controls accordingly
+            time = this.getTime();
+            timeC = time+1.2;
+            
+            % if time is earlier than the first waypoint
+            if(timeC<this.way.getTimeS(0)) % 0-based
+              v = this.way.getForwardRateMPS(0); % 0-based
+              w = this.way.getYawRateRPS(0); % 0-based
+              if(abs(v)<eps)
+                k = 0.0;
+              else
+                k = w/v;
+              end
+              
+            % if time is later than or equal to the last waypoint  
+            elseif(timeC>=this.way.getTimeS(N-1)) % 0-based
+              v = 0.0;
+              k = 0.0;
+              
+            % else time is between waypoints
+            else
+              % 0-based
+              for nB = 1:(N-1)
+                if(timeC<this.way.getTimeS(nB))
+                  break;
+                end
+              end
+              nA = nB-1;
+
+              timeDeltaOwn = this.own.getTimeDeltaS();
+              timeOwn = this.own.getTimeS();
+              yawOwn = this.own.getYawR();
+              latOwn = this.own.getLatR();
+              lonOwn = this.own.getLonR();
+              speedOwn = this.own.getForwardDeltaM()/timeDeltaOwn;
+              yawRateOwn = this.own.getYawDeltaR()/timeDeltaOwn;
+              
+              timeA = this.way.getTimeS(nA);
+              yawA = this.way.getYawR(nA);
+              latA = this.way.getLatR(nA);
+              lonA = this.way.getLonR(nA);
+              speedA = this.way.getForwardRateMPS(nA);
+              yawRateA = this.way.getYawRateRPS(nA);
+              
+              timeB = this.way.getTimeS(nB);
+              yawB = this.way.getYawR(nB);
+              latB = this.way.getLatR(nB);
+              lonB = this.way.getLonR(nB);
+              speedB = this.way.getForwardRateMPS(nB);
+              yawRateB = this.way.getYawRateRPS(nB);
+              
+              if(isempty(this.rLatM))
+                this.rLatM = earth.WGS84.radiusOfCurvature(latOwn);
+                this.rLonM = cos(earth.WGS84.geodeticToGeocentric(latOwn))*earth.WGS84.geodeticRadius(latOwn);
+              end
+              
+              northOwn = 0.0;
+              eastOwn = 0.0;
+              northA = (latA-latOwn)*this.rLatM;
+              eastA = (lonA-lonOwn)*this.rLonM;
+              northB = (latB-latOwn)*this.rLatM;
+              eastB = (lonB-lonOwn)*this.rLonM;
+              northRateOwn = speedOwn*cos(yawOwn);
+              eastRateOwn = speedOwn*sin(yawOwn);
+              northRateA = speedA*cos(yawA);
+              eastRateA = speedA*sin(yawA);
+              northRateB = speedB*cos(yawB);
+              eastRateB = speedB*sin(yawB);
+
+              alpha = (timeC-timeB)/(timeB-timeA);
+              speedC = speedA+alpha*(speedB-speedA);
+              northC = northA+alpha*(northB-northA);
+              eastC = eastA+alpha*(eastB-eastA);
+              yawRateC = yawRateA+alpha*(yawRateB-yawRateA);
+              northRateC = northRateA+alpha*(northRateB-northRateA);
+              eastRateC = eastRateA+alpha*(eastRateB-eastRateA);
+              yawC = atan2(eastRateC, northRateC);
+              
+              forwardC = northC*cos(yawC)+eastC*sin(yawC);
+              rightC = -northC*sin(yawC)+eastC*cos(yawC);
+              
+              yawErr = atan2(eastRateC-eastRateOwn, northRateC-northRateOwn);
+              rightErr = rightC;
+              
+              fprintf('yawErr=%f rightErr=%f\n', yawErr, rightErr);
+
+              v = speedC;
+              w = yawRateC+0.4*sat(yawErr, pi/16.0)+0.1*sat(rightErr, 1.0);
+
+              if(abs(v)<eps)
+                k = 0.0;
+              else
+                k = w/v;
+              end
+            end
+            
+            uTurn = OCDynamics.kssInv(k);
+            uSpeed = OCDynamics.vssInv(v);
+            this.sendCtrl(uTurn, uSpeed);
+            done = false;
+          end
+        end
+      else
+        this.processInbox(inbox);
+        done = ~this.ready;
+      end
+    end
+
+    function term(this)
+      this.sendCtrl(this.uTurnDefault, this.uSpeedDefault);
+    end
+  end
+  
+  properties (GetAccess = private, SetAccess = private)
+    cfg
+    own
+    way
+    ready
+    rLatM
+    rLonM
+    ownTopic
+    wayTopic
+    uTurnDefault
+    uSpeedDefault
+  end
+
+  methods (Access = private)
+    function processInbox(this, inbox)
+      [type, ~, pb] = Msg.Proto.unpack(inbox);
+      switch(type)
+        case 'nav.FusedState'
+          this.own = pb;
+        case 'nav.Waystates'
+          this.way = pb;
+      end
+      this.ready = ~(isempty(this.own)|isempty(this.way));
+    end
+    
+    function sendCtrl(this, uTurn, uSpeed)
+      lvin = nav.LabViewInBuilder();
+      ctrl = nav.CtrlBuilder();
+      u.turn = int32(uTurn);
+      u.speed = int32(uSpeed);
+      data = [typecast(u.turn, 'uint8'), typecast(u.speed, 'uint8')];
+      lvin.setData(lvin.getData().copyFrom(data));
+      this.send(Msg.Proto.pack('nav.LabViewIn', this.cfg.ownID, lvin));
+      ctrl.addUInt(u.turn);
+      ctrl.addUInt(u.speed);
+      this.send(Msg.Proto.pack('nav.Ctrl', this.cfg.ownID, ctrl));
+      this.log('uTurn=%d uSpeed=%d', u.turn, u.speed);
+    end
+  end
+end
+
+function x = sat(x, y)
+if(x>y)
+  x = y;
+elseif(x<-y)
+  x = -y;
+end
+end

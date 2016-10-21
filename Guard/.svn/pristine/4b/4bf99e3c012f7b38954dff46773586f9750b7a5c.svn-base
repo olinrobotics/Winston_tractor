@@ -1,0 +1,81 @@
+% FlightGear Rendering Engine Configuration.
+%
+% DEPENDENCIES:
+% FlightGear 3.4.0 installed in a user writable directory.
+classdef Config < handle
+  properties (GetAccess = public, Constant = true)
+    host = '127.0.0.1'; % multiplayer host address
+    multiPortRange = '5000'; % lower bound of multiplayer port range
+    hz = '10'; % renderer maximum refresh rate
+    hfov = '45'; % horizontal field of view in degrees
+    strides = '768'; % image width
+    steps = '768'; % image height
+    wind = '0@0'; % wind speed and direction
+    visibility = '32000'; % visibility in meters
+    pollution = '0.1'; % pollution level normalized in the range [0 1]
+    localtime = '2015:04:01:10:00:00'; % local time (yyyy:mm:dd:hh:mm:ss)
+    antialiasing = '4'; % depends on hardware and may be overridden by system driver settings
+    spaceAltitude = 164042; % initial altitude threshold for enabling earthview
+    bin = getBin(); % location of FlightGear executable
+    root = getRoot(); % must be writable
+    scenery = getScenery(); % must be writable
+    terrasync = getTerrasync(); % must be writable
+    delayStart = getDelayStart(); % seconds
+    delaySync = getDelaySync(); % seconds
+    verbose = false; % activates text output
+  end
+end
+
+function bin = getBin()
+if(ispc)
+  bin = 'C:\Program Files\FlightGear 3.4.0\bin';
+else
+  [status, bin] = system('which fgfs');
+  if(status==0)
+    bin = fileparts(bin(1:(end-1)));
+  else
+    bin = '';
+    warning('FlightGear: Could not find fgfs on this system.');
+  end 
+end
+end
+
+function root = getRoot()
+if(ispc)
+  root = 'C:\Program Files\FlightGear 3.4.0\data';
+else
+  root = '/usr/share/flightgear';
+end
+end
+
+function scenery = getScenery()
+if(ispc)
+  scenery = 'C:\Program Files\FlightGear 3.4.0\data\Scenery';
+else
+  scenery = '/usr/share/flightgear/Scenery';
+end
+end
+
+function terrasync = getTerrasync()
+if(ispc)
+  terrasync = 'C:\Program Files\FlightGear 3.4.0\data\Scenery';
+else
+  terrasync = '/usr/share/flightgear/Scenery';
+end
+end
+
+function delayStart = getDelayStart()
+if(ispc)
+  delayStart = 45;
+else
+  delayStart = 15;
+end
+end
+
+function delaySync = getDelaySync()
+if(ispc)
+  delaySync = 15;
+else
+  delaySync = 20;
+end
+end

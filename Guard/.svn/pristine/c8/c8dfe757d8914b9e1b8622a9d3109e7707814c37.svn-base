@@ -1,0 +1,265 @@
+syntax = "proto2";
+package nav;
+option java_package = "";
+option java_outer_classname = "nav";
+
+message LabViewIn
+{
+  // Contents are structured as follows:
+  // union
+  // {
+  //   struct U
+  //   {
+  //     int32_t turn;
+  //     int32_t speed;
+  //   } u;
+  //   unsigned char data[8];
+  // };
+  required bytes data = 1;
+}
+
+message LabViewOut
+{
+  // Contents are structured as follows:
+  // union
+  // {
+  //   struct Y
+  //   {
+  //     double yawR; // radians
+  //     double latR; // radians
+  //     double lonR; // radians
+  //     double yawRateRPS; // radians per second
+  //     double forwardRateMPS; // meters per second
+  //     double yawSigmaR; // radians
+  //     double latSigmaR; // radians
+  //     double lonSigmaR; // radians
+  //   } y;
+  //   unsigned char data[64];
+  // };
+  required bytes data = 1;
+}
+
+enum Behavior
+{
+  LOITER = 0; // maintain stability
+  APPROACH = 1; // navigate toward objective without exceeding constraints
+  CAPTURE = 2; // execute capture behavior
+  RELEASE = 3; // execute release behavior
+  DEPART = 4; // navigate away from objective without exceeding constraints
+}
+
+message Mission
+{
+  required Behavior behavior = 1;
+}
+
+message Waystates
+{
+  repeated double timeS = 1;
+  repeated double rollR = 2;
+  repeated double pitchR = 3;
+  repeated double yawR = 4;
+  repeated double latR = 5;
+  repeated double lonR = 6;
+  repeated double altM = 7;
+  repeated double rollRateRPS = 8;
+  repeated double pitchRateRPS = 9;
+  repeated double yawRateRPS = 10;
+  repeated double forwardRateMPS = 11;
+  repeated double rightRateMPS = 12;
+  repeated double downRateMPS = 13;
+}
+
+message Ctrl
+{
+  repeated double uReal = 1; // real control signals
+  repeated int32 uInt = 2; // integer control signals
+}
+
+message Img
+{
+  required double timeS = 1; // image time stamp
+  required double fovR = 2; // camera field of view
+  required uint32 steps = 3; // number of pixels in contiguous dimension
+  required uint32 strides = 4; // number of pixels in non-contiguous dimension
+  required uint32 layers = 5; // number of color channels
+  required bytes data = 6; // image data in array form
+}
+
+message RPY
+{
+  required double timeS = 1;
+
+  required double rollR = 2;
+  required double pitchR = 3;
+  required double yawR = 4;
+
+  optional double rollSigmaR = 5 [default = 0.0];
+  optional double pitchSigmaR = 6 [default = 0.0];
+  optional double yawSigmaR = 7 [default = 0.0];
+}
+
+message LatLon
+{
+  required double timeS = 1;
+
+  required double latR = 2;
+  required double lonR = 3;
+
+  optional double latSigmaR = 4 [default = 0.0];
+  optional double lonSigmaR = 5 [default = 0.0];
+}
+
+message Alt
+{
+  required double timeS = 1;
+  required double altM = 2;
+  optional double altSigmaM = 3 [default = 0.0];
+}
+
+message BodyRPYDelta
+{
+  required double timeS = 1;
+  required double timeDeltaS = 2;
+
+  required double rollDeltaR = 3;
+  required double pitchDeltaR = 4;
+  required double yawDeltaR = 5;
+
+  optional double rollDeltaSigmaRPS = 6 [default = 0.0];
+  optional double pitchDeltaSigmaRPS = 7 [default = 0.0];
+  optional double yawDeltaSigmaRPS = 8 [default = 0.0];
+}
+
+message BodyFRDDelta
+{
+  required double timeS = 1;
+  required double timeDeltaS = 2;
+
+  required double forwardDeltaM = 3;
+  required double rightDeltaM = 4;
+  required double downDeltaM = 5;
+
+  optional double forwardDeltaSigmaM = 6 [default = 0.0];
+  optional double rightDeltaSigmaM = 7 [default = 0.0];
+  optional double downDeltaSigmaM = 8 [default = 0.0];
+}
+
+message BodyFRDRateDelta
+{
+  required double timeS = 1;
+  required double timeDeltaS = 2;
+
+  required double forwardRateDeltaMPS = 3;
+  required double rightRateDeltaMPS = 4;
+  required double downRateDeltaMPS = 5;
+
+  optional double forwardRateDeltaSigmaMPS = 6 [default = 0.0];
+  optional double rightRateDeltaSigmaMPS = 7 [default = 0.0];
+  optional double downRateDeltaSigmaMPS = 8 [default = 0.0];
+}
+
+message RelRPY
+{
+  required string targetID = 1;
+  required double timeS = 2;
+
+  required double rollR = 3;
+  required double pitchR = 4;
+  required double yawR = 5;
+
+  optional double rollSigmaR = 6 [default = 0.0];
+  optional double pitchSigmaR = 7 [default = 0.0];
+  optional double yawSigmaR = 8 [default = 0.0];
+}
+
+message RelFRD
+{
+  required string targetID = 1;
+  required double timeS = 2;
+
+  required double forwardM = 3;
+  required double rightM = 4;
+  required double downM = 5;
+
+  optional double forwardSigmaM = 6 [default = 0.0];
+  optional double rightSigmaM = 7 [default = 0.0];
+  optional double downSigmaM = 8 [default = 0.0];
+}
+
+message FusedState
+{
+  required double timeS = 1;
+  required double timeDeltaS = 2;
+
+  required double rollR = 3;
+  required double pitchR = 4;
+  required double yawR = 5;
+
+  required double rollDeltaR = 6;
+  required double pitchDeltaR = 7;
+  required double yawDeltaR = 8;
+
+  required double latR = 9;
+  required double lonR = 10;
+  required double altM = 11;
+
+  required double forwardDeltaM = 12;
+  required double rightDeltaM = 13;
+  required double downDeltaM = 14;
+
+  required double forwardRateDeltaMPS = 15;
+  required double rightRateDeltaMPS = 16;
+  required double downRateDeltaMPS = 17;
+
+  optional double rollSigmaR = 18 [default = 0.0];
+  optional double pitchSigmaR = 19 [default = 0.0];
+  optional double yawSigmaR = 20 [default = 0.0];
+
+  optional double rollDeltaSigmaRPS = 21 [default = 0.0];
+  optional double pitchDeltaSigmaRPS = 22 [default = 0.0];
+  optional double yawDeltaSigmaRPS = 23 [default = 0.0];
+
+  optional double latSigmaR = 24 [default = 0.0];
+  optional double lonSigmaR = 25 [default = 0.0];
+  optional double altSigmaM = 26 [default = 0.0];
+
+  optional double forwardDeltaSigmaM = 27 [default = 0.0];
+  optional double rightDeltaSigmaM = 28 [default = 0.0];
+  optional double downDeltaSigmaM = 29 [default = 0.0];
+
+  optional double forwardRateDeltaSigmaMPS = 30 [default = 0.0];
+  optional double rightRateDeltaSigmaMPS = 31 [default = 0.0];
+  optional double downRateDeltaSigmaMPS = 32 [default = 0.0];
+}
+
+message RelFusedState
+{
+  required string ownID = 1;
+  required string targetID = 2;
+  required double timeS = 3;
+
+  required double rollR = 4;
+  required double pitchR = 5;
+  required double yawR = 6;
+
+  required double forwardM = 7;
+  required double rightM = 8;
+  required double downM = 9;
+
+  required double forwardDeltaM = 10;
+  required double rightDeltaM = 11;
+  required double downDeltaM = 12;
+
+  optional double forwardDeltaSigmaM = 13 [default = 0.0];
+  optional double rightDeltaSigmaM = 14 [default = 0.0];
+  optional double downDeltaSigmaM = 15 [default = 0.0];
+
+  optional double rollSigmaR = 16 [default = 0.0];
+  optional double pitchSigmaR = 17 [default = 0.0];
+  optional double yawSigmaR = 18 [default = 0.0];
+
+  optional double forwardSigmaM = 19 [default = 0.0];
+  optional double rightSigmaM = 20 [default = 0.0];
+  optional double downSigmaM = 21 [default = 0.0];
+}

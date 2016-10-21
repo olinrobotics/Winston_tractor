@@ -1,0 +1,28 @@
+classdef ARDCmdTest < Msg.App & Msg.Cmd & Msg.Log
+  methods (Access = public)
+    function this = ARDCmdTest()
+      cfg = JSONRead('guard.json');
+      this = this@Msg.App(mfilename('class'), cfg.fastTick, cfg.slowTick);
+      this = this@Msg.Cmd(cfg.ackPeriod, cfg.timeWarp);
+      this = this@Msg.Log();
+    end
+
+    function done = init(this)
+      this.log('INIT');
+      done = true;
+    end
+    
+    function idle(this, inbox) %#ok unused input
+      this.log('IDLE');
+    end
+    
+    function done = run(this, inbox) %#ok unused input
+      this.log('RUN');
+      done = false;
+    end
+    
+    function term(this)
+      this.log('TERM');
+    end
+  end
+end

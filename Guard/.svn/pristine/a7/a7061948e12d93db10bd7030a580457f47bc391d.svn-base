@@ -1,0 +1,20 @@
+% An application that simulates the target interface of a satellite (which may or may not be controllable).
+classdef ARDSatSimTarget < ARDSim
+  properties (GetAccess = public, Constant = true)
+    dynamicModelName = 'ARDSimpleModel';
+    vehicleModelName = 'PirsBall';
+    xReal0 = [earth.WGS84.majorRadius+100000; 0; 54; 0; 0; 0; sqrt(2)/2; 0; -sqrt(2)/2; 0];
+  end
+  
+  methods (Access = public)
+    function this = ARDSatSimTarget()
+      cfg = JSONRead('guard.json');
+      dynamicModel = ARDDynamics(ARDSatSimTarget.dynamicModelName);
+      this = this@ARDSim(cfg.targetID, dynamicModel, ARDSatSimTarget.xReal0);
+      [pbRPY, pbLatLon, pbAlt] = this.getState();
+      this.graphicModel = FlightGear.Target(this.port, ARDSatSimTarget.vehicleModelName, cfg.targetID,...
+        pbLatLon.getLatR()*math.RADTODEG, pbLatLon.getLonR()*math.RADTODEG, pbAlt.getAltM()*math.MTOFT,...
+        pbRPY.getRollR()*math.RADTODEG, pbRPY.getPitchR()*math.RADTODEG, pbRPY.getYawR()*math.RADTODEG);
+    end
+  end
+end
